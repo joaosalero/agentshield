@@ -1,4 +1,6 @@
+#include "audit_log.hpp"
 #include "risk_engine.hpp"
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 #include <iostream>
@@ -150,5 +152,33 @@ int main() {
     assert(unknown.risk_score == 75);
     assert(unknown.level == agentshield::Severity::critical);
     assert(unknown.findings.size() == 3);
+
+    assert(agentshield::sha256_hex("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    agentshield::AuditKey audit_key{};
+    std::fill(audit_key.begin(), audit_key.begin() + 20, 0x0b);
+    assert(agentshield::hmac_sha256_hex(audit_key, "Hi There") == "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7");
+    agentshield::AuditRecord first{1, 10, std::string(64, '0'), "", "{}", ""};
+    std::string first_line = agentshield::encode_audit_record(first, audit_key);
+    auto decoded_first = agentshield::decode_audit_record(first_line.substr(0, first_line.size() - 1));
+    agentshield::AuditRecord second{2, 11, decoded_first.mac, "", "{\"event\":2}\n", ""};
+    std::string chain = first_line + agentshield::encode_audit_record(second, audit_key);
+    std::istringstream audit_input(chain);
+    std::vector<agentshield::AuditRecord> audit_records;
+    auto verified = agentshield::verify_audit_stream(audit_input, audit_key, &audit_records);
+    assert(verified.records == 2 && verified.final_mac == audit_records[1].mac);
+    assert(agentshield::helix_export_json(audit_records[0]).find("io.helix-sentinel.agentshield/v1") != std::string::npos);
+    std::string noncanonical = first_line;
+    auto padded = noncanonical.find("e30=");
+    assert(padded != std::string::npos);
+    noncanonical[padded + 2] = '1';
+    bool padding_rejected = false;
+    try { (void)agentshield::decode_audit_record(noncanonical.substr(0, noncanonical.size() - 1)); }
+    catch (const std::invalid_argument&) { padding_rejected = true; }
+    assert(padding_rejected);
+    bool tamper_rejected = false;
+    chain[chain.find("eventBase64") + 14] = chain[chain.find("eventBase64") + 14] == 'A' ? 'B' : 'A';
+    try { std::istringstream tampered(chain); (void)agentshield::verify_audit_stream(tampered, audit_key); }
+    catch (const std::invalid_argument&) { tamper_rejected = true; }
+    assert(tamper_rejected);
     std::cout << "risk engine: OK\n";
 }

@@ -33,11 +33,30 @@ coverage. A failed collection does not replace the last trusted baseline.
 
 The desktop access timeline is bounded to 500 rows to avoid unbounded memory
 growth. It is session-local and is not written unless the operator explicitly
-selects an audit file in the native monitor.
+selects an audit file and matching integrity key in the native monitor.
+
+## Audit trust boundary
+
+Audit events use a versioned envelope and an HMAC-SHA-256 chain backed by the
+reviewed OpenSSL 3 cryptographic provider. The event
+digest binds the exact serialized snapshot, the previous MAC binds ordering,
+and the record MAC authenticates sequence, timestamp, predecessor, digest, and
+event. Existing content must verify before append. Comparisons of authentication
+values use OpenSSL's constant-time comparison. Non-canonical Base64 is rejected
+so alternate textual encodings cannot bypass envelope integrity. Keys and logs require owner-only permissions, regular
+file type, expected ownership, bounded size, and final-component symlink
+rejection.
+
+The audit key stays outside telemetry. Helix export is an offline transformation
+performed only after whole-file verification; AgentShield does not connect to a
+Helix endpoint. HMAC does not provide confidentiality or prevent rollback to a
+valid prefix, so deployments must separately protect the key and anchor trusted
+final MAC receipts.
 
 ## Fail-closed behavior
 
-Invalid policies, unsafe audit files, inability to apply a requested resource
+Invalid policies, missing or unsafe audit keys, invalid audit chains, retention
+limit exhaustion, unsafe audit files, inability to apply a requested resource
 limit, failure to isolate the process group and unsupported option combinations
 terminate the operation with a non-zero code. Monitoring does not claim that a
 failed snapshot is safe.

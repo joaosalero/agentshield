@@ -13,6 +13,9 @@ findings in a live desktop dashboard or machine-readable event stream.
 > Linux/WSL preview. AgentShield is an observability control, not a complete
 > sandbox. It does not claim to block every operating-system action.
 
+Build requirements are a C11 compiler, a C++17 compiler, OpenSSL 3 development
+headers, and JDK 17 for the optional desktop dashboard.
+
 ## Capabilities
 
 - Live inventory of credential-like environment variable **names**
@@ -26,10 +29,11 @@ findings in a live desktop dashboard or machine-readable event stream.
 - Versioned allow/deny/approval policies with fail-closed supervised enforcement
 - Launch-scoped approvals that are never persisted
 - Point-in-time inspection, continuous monitoring, or supervised command launch
-- JSON Lines contract designed for SIEM ingestion and future Helix Sentinel use
+- Authenticated HMAC-SHA-256 audit chain with offline verification
+- Verified `io.helix-sentinel.agentshield/v1` JSONL export without network transmission
 - Java Swing dashboard with live credential and finding tables
 - Strict privacy mode for shared telemetry and demonstrations
-- Owner-only local JSONL audit files with final-component symlink rejection
+- Owner-only audit keys/logs, append pre-verification, and fail-closed size retention
 - Secure supervised execution with `no_new_privs`, no core dumps, descriptor
   isolation, process groups, and optional CPU/memory/process limits
 - Read-only `/proc` sensor written in C and policy engine written in C++17
@@ -57,7 +61,11 @@ make
   --max-cpu-seconds 600 -- python3 your_agent.py
 ./build/agentshield run --policy policies/baseline.policy \
   --approve credential:MY_SCOPED_TOKEN -- python3 your_agent.py
-./build/agentshield watch 12345 --privacy strict --audit audit.jsonl
+./build/agentshield audit init-key audit.key
+./build/agentshield watch 12345 --privacy strict \
+  --audit audit.jsonl --audit-key audit.key
+./build/agentshield audit verify audit.jsonl --audit-key audit.key
+./build/agentshield audit export audit.jsonl --audit-key audit.key > helix.jsonl
 ```
 
 Desktop dashboard (JDK 17+):
@@ -104,7 +112,7 @@ mount options. Socket identifiers show that network access exists but do not yet
 resolve every inode to a remote endpoint. Environment variables can change
 between snapshots, and a compromised kernel is outside the trust boundary.
 
-See [the policy guide](docs/POLICY.md), [the security architecture](docs/SECURITY_ARCHITECTURE.md),
+See [the policy guide](docs/POLICY.md), [authenticated audit guide](docs/AUDIT.md), [the security architecture](docs/SECURITY_ARCHITECTURE.md),
 [privacy guide](docs/PRIVACY.md), [threat model](docs/THREAT_MODEL.md), and
 [security policy](SECURITY.md).
 
@@ -112,8 +120,8 @@ See [the policy guide](docs/POLICY.md), [the security architecture](docs/SECURIT
 
 - eBPF event sensor for file, process, and network activity
 - Windows ETW and macOS Endpoint Security adapters
-- signed policy bundles and tamper-evident audit chains
-- native Helix Sentinel ingestion adapter
+- signed policy bundles and externally anchored audit receipts
+- native Helix Sentinel transport adapter with mutual authentication
 
 ## License
 

@@ -1,4 +1,5 @@
 #include "agentshield/sensor.h"
+#include "audit_log.hpp"
 #include "risk_engine.hpp"
 
 #include <algorithm>
@@ -9,6 +10,7 @@
 #include <fcntl.h>
 #include <iostream>
 #include <optional>
+#include <openssl/crypto.h>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -18,6 +20,7 @@
 #include <sys/prctl.h>
 #include <sys/ptrace.h>
 #include <sys/resource.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -25,6 +28,11 @@
 namespace {
 volatile std::sig_atomic_t running=1;
 int audit_fd=-1;
+std::optional<agentshield::AuditKey> audit_key;
+std::uint64_t audit_sequence=0;
+std::string audit_previous_mac(64,'0');
+std::uint64_t audit_size=0;
+std::uint64_t audit_max_bytes=64U*1024U*1024U;
 struct RunLimits { int memory_mb=0; int cpu_seconds=0; int processes=0; bool no_new_privileges=true; bool inherit_output=false; bool inherit_input=false; };
 void stop(int){running=0;}
 long long now_ms(){return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();}
@@ -32,11 +40,16 @@ long long now_ms(){return std::chrono::duration_cast<std::chrono::milliseconds>(
 void usage(){
     std::cout << "AgentShield - runtime security monitor for AI agents\n\nUsage:\n"
       "  agentshield inspect PID [OPTIONS]\n  agentshield watch PID [OPTIONS]\n"
-      "  agentshield run [OPTIONS] -- COMMAND [ARGS...]\n\nOptions:\n"
+      "  agentshield run [OPTIONS] -- COMMAND [ARGS...]\n"
+      "  agentshield audit init-key FILE\n"
+      "  agentshield audit verify FILE --audit-key FILE\n"
+      "  agentshield audit export FILE --audit-key FILE\n\nOptions:\n"
       "  --format json|tsv          Output format (default: json)\n"
       "  --privacy standard|strict Strict redacts credential names and paths\n"
       "  --interval MS              Watch interval (default: 1000)\n"
-      "  --audit FILE               Append JSONL to an owner-only regular file\n"
+      "  --audit FILE               Append authenticated audit envelopes\n"
+      "  --audit-key FILE           Owner-only 32-byte HMAC key file\n"
+      "  --audit-max-bytes N        Fail closed at this audit size (default: 64 MiB)\n"
       "  --policy FILE              Evaluate a secure AgentShield policy file\n"
       "  --approve CATEGORY:VALUE   Approve one policy-gated exposure for this run\n"
       "  --max-memory-mb N          Supervised process address-space limit\n"
@@ -52,26 +65,46 @@ int parse_positive(const std::string& value){
     try{size_t used=0;int n=std::stoi(value,&used);if(n>0&&used==value.size())return n;}catch(...){ }
     throw std::invalid_argument("expected a positive integer");
 }
+std::uint64_t parse_positive_size(const std::string& value){try{size_t used=0;unsigned long long n=std::stoull(value,&used);if(n>0&&used==value.size())return n;}catch(...){ }throw std::invalid_argument("expected a positive integer");}
 void write_all(int fd,const std::string& data){
     size_t offset=0;while(offset<data.size()){ssize_t count=write(fd,data.data()+offset,data.size()-offset);if(count<0&&errno==EINTR)continue;if(count<=0)throw std::runtime_error("secure audit write failed");offset+=static_cast<size_t>(count);}
 }
-int open_audit(const std::string& path){
-    int fd=open(path.c_str(),O_WRONLY|O_APPEND|O_CREAT|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK,0600);
+void finalize_audit(){if(audit_fd<0)return;if(fsync(audit_fd)!=0)throw std::runtime_error("audit synchronization failed");close(audit_fd);audit_fd=-1;if(audit_key){OPENSSL_cleanse(audit_key->data(),audit_key->size());audit_key.reset();}}
+std::string read_secure_file(const std::string& path,std::size_t maximum,const char* purpose,bool root_allowed,bool owner_only=false){
+    int fd=open(path.c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK);
+    if(fd<0)throw std::runtime_error(std::string("cannot open ")+purpose+" safely: "+std::strerror(errno));
+    struct stat status{};
+    if(fstat(fd,&status)!=0){close(fd);throw std::runtime_error(std::string("cannot inspect ")+purpose+" safely");}
+    bool owner_ok=status.st_uid==geteuid()||(root_allowed&&status.st_uid==0);
+    if(!S_ISREG(status.st_mode)||!owner_ok||(owner_only?(status.st_mode&0077)!=0:(status.st_mode&0022)!=0)||status.st_size<0||static_cast<std::uint64_t>(status.st_size)>maximum){close(fd);throw std::runtime_error(std::string(purpose)+" must be a regular file with trusted ownership, secure permissions, and bounded size");}
+    std::string data;data.reserve(static_cast<std::size_t>(status.st_size));char buffer[4096];
+    for(;;){ssize_t count=read(fd,buffer,sizeof buffer);if(count<0&&errno==EINTR)continue;if(count<0){close(fd);throw std::runtime_error(std::string("cannot read ")+purpose+" safely");}if(count==0)break;if(data.size()+static_cast<std::size_t>(count)>maximum){close(fd);throw std::runtime_error(std::string(purpose)+" exceeds its size limit");}data.append(buffer,static_cast<std::size_t>(count));}
+    close(fd);return data;
+}
+agentshield::AuditKey read_audit_key(const std::string& path){
+    int fd=open(path.c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK);if(fd<0)throw std::runtime_error("cannot open audit key safely: "+std::string(std::strerror(errno)));
+    struct stat status{};if(fstat(fd,&status)!=0||!S_ISREG(status.st_mode)||status.st_uid!=geteuid()||(status.st_mode&0077)!=0||status.st_size<64||status.st_size>66){close(fd);throw std::runtime_error("audit key must be an owner-only regular file owned by the current user");}
+    std::string data;char buffer[66];for(;;){ssize_t count=read(fd,buffer,sizeof buffer);if(count<0&&errno==EINTR)continue;if(count<0){close(fd);throw std::runtime_error("cannot read audit key safely");}if(count==0)break;if(data.size()+static_cast<std::size_t>(count)>66){close(fd);throw std::runtime_error("audit key is oversized");}data.append(buffer,static_cast<std::size_t>(count));}close(fd);try{auto key=agentshield::audit_key_from_hex(data);OPENSSL_cleanse(data.data(),data.size());return key;}catch(...){OPENSSL_cleanse(data.data(),data.size());throw;}
+}
+void create_audit_key(const std::string& path){
+    agentshield::AuditKey key{};std::size_t offset=0;while(offset<key.size()){ssize_t count=syscall(SYS_getrandom,key.data()+offset,key.size()-offset,0);if(count<0&&errno==EINTR)continue;if(count<=0)throw std::runtime_error("secure random generation failed");offset+=static_cast<std::size_t>(count);}
+    int fd=open(path.c_str(),O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC|O_NOFOLLOW,0600);if(fd<0)throw std::runtime_error("cannot create audit key safely: "+std::string(std::strerror(errno)));
+    std::string encoded=agentshield::audit_key_to_hex(key)+"\n";try{write_all(fd,encoded);if(fsync(fd)!=0)throw std::runtime_error("audit key synchronization failed");close(fd);OPENSSL_cleanse(encoded.data(),encoded.size());OPENSSL_cleanse(key.data(),key.size());}catch(...){close(fd);unlink(path.c_str());OPENSSL_cleanse(encoded.data(),encoded.size());OPENSSL_cleanse(key.data(),key.size());throw;}
+}
+int open_audit(const std::string& path,const agentshield::AuditKey& key,std::uint64_t maximum){
+    int fd=open(path.c_str(),O_RDWR|O_APPEND|O_CREAT|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK,0600);
     if(fd<0)throw std::runtime_error("cannot open audit file safely: "+std::string(std::strerror(errno)));
     struct stat status{};
-    if(fstat(fd,&status)!=0||!S_ISREG(status.st_mode)||status.st_uid!=geteuid()||(status.st_mode&0077)!=0){close(fd);throw std::runtime_error("audit file must be a regular, owner-only file owned by the current user");}
+    if(fstat(fd,&status)!=0||!S_ISREG(status.st_mode)||status.st_uid!=geteuid()||(status.st_mode&0077)!=0||status.st_size<0||static_cast<std::uint64_t>(status.st_size)>maximum){close(fd);throw std::runtime_error("audit file must be a regular, owner-only file owned by the current user and within the configured size limit");}
+    if(flock(fd,LOCK_EX|LOCK_NB)!=0){close(fd);throw std::runtime_error("audit file is already in use by another writer");}
     int flags=fcntl(fd,F_GETFL);
     if(flags<0||fcntl(fd,F_SETFL,flags&~O_NONBLOCK)!=0){close(fd);throw std::runtime_error("cannot configure audit file safely");}
+    std::string existing;existing.reserve(static_cast<std::size_t>(status.st_size));if(lseek(fd,0,SEEK_SET)<0){close(fd);throw std::runtime_error("cannot inspect existing audit chain");}char buffer[4096];for(;;){ssize_t count=read(fd,buffer,sizeof buffer);if(count<0&&errno==EINTR)continue;if(count<0){close(fd);throw std::runtime_error("cannot inspect existing audit chain");}if(count==0)break;existing.append(buffer,static_cast<std::size_t>(count));}
+    std::istringstream input(existing);auto verified=agentshield::verify_audit_stream(input,key);audit_sequence=verified.records;audit_previous_mac=verified.final_mac;audit_size=static_cast<std::uint64_t>(status.st_size);audit_max_bytes=maximum;
     return fd;
 }
 std::string read_policy_file(const std::string& path){
-    int fd=open(path.c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK);
-    if(fd<0)throw std::runtime_error("cannot open policy file safely: "+std::string(std::strerror(errno)));
-    struct stat status{};
-    if(fstat(fd,&status)!=0||!S_ISREG(status.st_mode)||(status.st_uid!=geteuid()&&status.st_uid!=0)||(status.st_mode&0022)!=0||status.st_size>65536){close(fd);throw std::runtime_error("policy file must be a regular, non-writable-by-others file owned by the current user or root and no larger than 64 KiB");}
-    std::string data;data.reserve(static_cast<size_t>(std::max<off_t>(status.st_size,0)));char buffer[4096];
-    for(;;){ssize_t count=read(fd,buffer,sizeof buffer);if(count<0&&errno==EINTR)continue;if(count<0){close(fd);throw std::runtime_error("cannot read policy file safely");}if(count==0)break;if(data.size()+static_cast<size_t>(count)>65536){close(fd);throw std::runtime_error("policy file exceeds 64 KiB");}data.append(buffer,static_cast<size_t>(count));}
-    close(fd);return data;
+    return read_secure_file(path,65536,"policy file",true);
 }
 void validate_approval(const std::string& approval){
     auto separator=approval.find(':');if(separator==std::string::npos||separator==0||separator+1>=approval.size()||approval.find_first_of("\r\n\t")!=std::string::npos)throw std::invalid_argument("approval must be CATEGORY:VALUE");
@@ -80,7 +113,7 @@ void validate_approval(const std::string& approval){
 int emit(int pid,const std::string& format,agentshield::Privacy privacy,agentshield::Assessment* previous=nullptr,const agentshield::Policy* policy=nullptr,const std::set<std::string>& approvals={}){
     as_snapshot snapshot{};char error[256];if(as_collect_snapshot(pid,&snapshot,error,sizeof error)!=0){std::cerr<<"agentshield: "<<error<<'\n';return 1;}
     auto assessment=agentshield::assess(snapshot);auto changes=previous&&previous->snapshot.pid?agentshield::detect_changes(*previous,assessment):std::vector<agentshield::ExposureChange>{};std::optional<agentshield::PolicyEvaluation> evaluation;if(policy)evaluation=agentshield::evaluate_policy(assessment,*policy,approvals);long long timestamp=now_ms();auto evaluated=evaluation?&*evaluation:nullptr;std::string json=agentshield::to_json(assessment,timestamp,privacy,changes,evaluated);std::cout<<(format=="tsv"?agentshield::to_tsv(assessment,timestamp,privacy,changes,evaluated):json)<<std::flush;
-    if(audit_fd>=0){try{write_all(audit_fd,json);}catch(const std::exception& error){std::cerr<<"agentshield: "<<error.what()<<'\n';return 1;}}
+    if(audit_fd>=0){try{agentshield::AuditRecord record{audit_sequence+1,timestamp,audit_previous_mac,"",json,""};std::string encoded=agentshield::encode_audit_record(record,*audit_key);if(encoded.size()>audit_max_bytes-audit_size)throw std::runtime_error("audit retention limit reached; archive or replace the verified log explicitly");write_all(audit_fd,encoded);audit_size+=encoded.size();audit_sequence++;audit_previous_mac=agentshield::decode_audit_record(encoded.substr(0,encoded.size()-1)).mac;}catch(const std::exception& error){std::cerr<<"agentshield: "<<error.what()<<'\n';return 1;}}
     if(previous)*previous=std::move(assessment);
     return evaluation&&evaluation->blocked?3:0;
 }
@@ -134,19 +167,33 @@ int main(int argc,char** argv){
     try{
         harden_monitor();
         if(argc<2||std::string(argv[1])=="--help"){usage();return argc<2?2:0;}
-        std::string action=argv[1],format="json",privacy_text="standard",audit_path,policy_path;std::set<std::string> approvals;int interval=1000,pid=0,command_index=-1;RunLimits limits;
+        std::string action=argv[1],format="json",privacy_text="standard",audit_path,audit_key_path,policy_path;std::set<std::string> approvals;int interval=1000,pid=0,command_index=-1;std::uint64_t configured_audit_max=64U*1024U*1024U;bool audit_max_configured=false;RunLimits limits;
+        if(action=="audit"){
+            if(argc<4)throw std::invalid_argument("audit requires init-key, verify, or export and a file");
+            std::string operation=argv[2],path=argv[3];
+            if(operation=="init-key"){if(argc!=4)throw std::invalid_argument("audit init-key accepts exactly one file");create_audit_key(path);std::cout<<"Audit key created securely.\n";return 0;}
+            if(operation!="verify"&&operation!="export")throw std::invalid_argument("unknown audit operation: "+operation);
+            for(int j=4;j<argc;++j){std::string argument=argv[j];if(argument=="--audit-key"&&j+1<argc)audit_key_path=argv[++j];else throw std::invalid_argument("unknown or incomplete audit option: "+argument);}if(audit_key_path.empty())throw std::invalid_argument("audit verify/export requires --audit-key");auto key=read_audit_key(audit_key_path);std::string data=read_secure_file(path,256U*1024U*1024U,"audit file",false,true);std::istringstream input(data);std::vector<agentshield::AuditRecord> records;auto result=agentshield::verify_audit_stream(input,key,operation=="export"?&records:nullptr);
+            if(result.records==0)throw std::invalid_argument("audit log contains no records");
+            if(operation=="verify"){std::cout<<"{\"schema\":\"io.agentshield.audit-verification/v1\",\"verified\":true,\"records\":"<<result.records<<",\"finalMac\":\""<<result.final_mac<<"\"}\n";return 0;}
+            for(const auto& record:records)std::cout<<agentshield::helix_export_json(record);
+            return 0;
+        }
         int i=2;if(action=="inspect"||action=="watch"){if(i>=argc)throw std::invalid_argument("PID is required");pid=parse_positive(argv[i++]);}
         for(;i<argc;++i){std::string argument=argv[i];if(argument=="--"){command_index=i+1;break;}if(argument=="--allow-new-privs"){limits.no_new_privileges=false;continue;}
-            if((argument=="--interval"||argument=="--format"||argument=="--privacy"||argument=="--audit"||argument=="--policy"||argument=="--approve"||argument=="--max-memory-mb"||argument=="--max-cpu-seconds"||argument=="--max-processes"||argument=="--agent-output"||argument=="--agent-input")&&i+1<argc){std::string value=argv[++i];if(argument=="--interval")interval=parse_positive(value);else if(argument=="--format")format=value;else if(argument=="--privacy")privacy_text=value;else if(argument=="--audit")audit_path=value;else if(argument=="--policy")policy_path=value;else if(argument=="--approve"){validate_approval(value);approvals.insert(value);}else if(argument=="--max-memory-mb")limits.memory_mb=parse_positive(value);else if(argument=="--max-cpu-seconds")limits.cpu_seconds=parse_positive(value);else if(argument=="--max-processes")limits.processes=parse_positive(value);else if(argument=="--agent-output"){if(value=="inherit")limits.inherit_output=true;else if(value!="discard")throw std::invalid_argument("agent output must be discard or inherit");}else{if(value=="inherit")limits.inherit_input=true;else if(value!="discard")throw std::invalid_argument("agent input must be discard or inherit");}continue;}throw std::invalid_argument("unknown or incomplete option: "+argument);}
+            if((argument=="--interval"||argument=="--format"||argument=="--privacy"||argument=="--audit"||argument=="--audit-key"||argument=="--audit-max-bytes"||argument=="--policy"||argument=="--approve"||argument=="--max-memory-mb"||argument=="--max-cpu-seconds"||argument=="--max-processes"||argument=="--agent-output"||argument=="--agent-input")&&i+1<argc){std::string value=argv[++i];if(argument=="--interval")interval=parse_positive(value);else if(argument=="--format")format=value;else if(argument=="--privacy")privacy_text=value;else if(argument=="--audit")audit_path=value;else if(argument=="--audit-key")audit_key_path=value;else if(argument=="--audit-max-bytes"){configured_audit_max=parse_positive_size(value);audit_max_configured=true;}else if(argument=="--policy")policy_path=value;else if(argument=="--approve"){validate_approval(value);approvals.insert(value);}else if(argument=="--max-memory-mb")limits.memory_mb=parse_positive(value);else if(argument=="--max-cpu-seconds")limits.cpu_seconds=parse_positive(value);else if(argument=="--max-processes")limits.processes=parse_positive(value);else if(argument=="--agent-output"){if(value=="inherit")limits.inherit_output=true;else if(value!="discard")throw std::invalid_argument("agent output must be discard or inherit");}else{if(value=="inherit")limits.inherit_input=true;else if(value!="discard")throw std::invalid_argument("agent input must be discard or inherit");}continue;}throw std::invalid_argument("unknown or incomplete option: "+argument);}
         if(format!="json"&&format!="tsv")throw std::invalid_argument("format must be json or tsv");
         if(privacy_text!="standard"&&privacy_text!="strict")throw std::invalid_argument("privacy must be standard or strict");
         if(action!="inspect"&&action!="watch"&&action!="run")throw std::invalid_argument("unknown action: "+action);
         if(action!="run"&&(limits.memory_mb||limits.cpu_seconds||limits.processes||!limits.no_new_privileges||limits.inherit_output||limits.inherit_input))throw std::invalid_argument("process controls are valid only with run");
         if(!approvals.empty()&&policy_path.empty())throw std::invalid_argument("--approve requires --policy");
+        if(audit_path.empty()!=audit_key_path.empty())throw std::invalid_argument("--audit and --audit-key must be provided together");
+        if(audit_path.empty()&&audit_max_configured)throw std::invalid_argument("--audit-max-bytes requires --audit");
+        if(configured_audit_max>256U*1024U*1024U)throw std::invalid_argument("--audit-max-bytes cannot exceed 256 MiB per session file");
         if(action!="run"&&!approvals.empty())throw std::invalid_argument("approvals are valid only with run");
         std::optional<agentshield::Policy> policy;if(!policy_path.empty()){std::istringstream input(read_policy_file(policy_path));policy=agentshield::parse_policy(input);if(policy->enforce&&action!="run")throw std::invalid_argument("enforce policies are valid only with run");}
-        agentshield::Privacy privacy=privacy_text=="strict"?agentshield::Privacy::strict:agentshield::Privacy::standard;if(!audit_path.empty())audit_fd=open_audit(audit_path);
-        if(action=="inspect"){int result=emit(pid,format,privacy,nullptr,policy?&*policy:nullptr,approvals);if(audit_fd>=0)close(audit_fd);return result;}
+        agentshield::Privacy privacy=privacy_text=="strict"?agentshield::Privacy::strict:agentshield::Privacy::standard;if(!audit_path.empty()){audit_key=read_audit_key(audit_key_path);audit_fd=open_audit(audit_path,*audit_key,configured_audit_max);}
+        if(action=="inspect"){int result=emit(pid,format,privacy,nullptr,policy?&*policy:nullptr,approvals);finalize_audit();return result;}
         std::signal(SIGINT,stop);std::signal(SIGTERM,stop);pid_t child=-1;agentshield::Assessment previous;
         if(action=="run"){
             if(command_index<0||command_index>=argc)throw std::invalid_argument("COMMAND is required after --");
@@ -160,11 +207,11 @@ int main(int argc,char** argv){
             int exec_error=0;ssize_t status_count=read(status_pipe[0],&exec_error,sizeof exec_error);close(status_pipe[0]);
             if(status_count==sizeof exec_error){waitpid(child,nullptr,0);throw std::runtime_error("cannot execute supervised command: "+std::string(std::strerror(exec_error)));}
             pid=child;
-            if(gate_before_exec){int exec_status=0;if(waitpid(child,&exec_status,0)!=child||!WIFSTOPPED(exec_status)||WSTOPSIG(exec_status)!=SIGTRAP){kill(-child,SIGKILL);waitpid(child,nullptr,0);throw std::runtime_error("supervised command did not reach the protected exec boundary");}int initial_result=emit(pid,format,privacy,&previous,&*policy,approvals);if(initial_result!=0){if(ptrace(PTRACE_DETACH,child,nullptr,SIGKILL)!=0)kill(-child,SIGKILL);waitpid(child,nullptr,0);if(audit_fd>=0){if(fsync(audit_fd)!=0)throw std::runtime_error("audit synchronization failed");close(audit_fd);audit_fd=-1;}return initial_result;}if(ptrace(PTRACE_DETACH,child,nullptr,nullptr)!=0){kill(-child,SIGKILL);waitpid(child,nullptr,0);throw std::runtime_error("could not release the protected exec boundary");}}
+            if(gate_before_exec){int exec_status=0;if(waitpid(child,&exec_status,0)!=child||!WIFSTOPPED(exec_status)||WSTOPSIG(exec_status)!=SIGTRAP){kill(-child,SIGKILL);waitpid(child,nullptr,0);throw std::runtime_error("supervised command did not reach the protected exec boundary");}int initial_result=emit(pid,format,privacy,&previous,&*policy,approvals);if(initial_result!=0){if(ptrace(PTRACE_DETACH,child,nullptr,SIGKILL)!=0)kill(-child,SIGKILL);waitpid(child,nullptr,0);finalize_audit();return initial_result;}if(ptrace(PTRACE_DETACH,child,nullptr,nullptr)!=0){kill(-child,SIGKILL);waitpid(child,nullptr,0);throw std::runtime_error("could not release the protected exec boundary");}}
         }
         int result=0;bool child_reaped=false;
         while(running){if(child>0){int status=0;pid_t state=waitpid(child,&status,WNOHANG);if(state==child){result=exit_result(status);child_reaped=true;terminate_group(child);break;}}int emitted=emit(pid,format,privacy,&previous,policy?&*policy:nullptr,approvals);if(emitted!=0){if(child>0){terminate_group(child);int status=0;if(waitpid(child,&status,0)==child)child_reaped=true;}result=emitted;break;}std::this_thread::sleep_for(std::chrono::milliseconds(interval));}
         if(child>0&&!child_reaped){terminate_group(child);int status=0;if(waitpid(child,&status,0)==child)result=exit_result(status);else result=1;}
-        if(audit_fd>=0){if(fsync(audit_fd)!=0)throw std::runtime_error("audit synchronization failed");close(audit_fd);audit_fd=-1;}return result;
-    }catch(const std::exception& error){if(audit_fd>=0)close(audit_fd);std::cerr<<"agentshield: "<<error.what()<<'\n';return 2;}
+        finalize_audit();return result;
+    }catch(const std::exception& error){if(audit_fd>=0){close(audit_fd);audit_fd=-1;}if(audit_key){OPENSSL_cleanse(audit_key->data(),audit_key->size());audit_key.reset();}std::cerr<<"agentshield: "<<error.what()<<'\n';return 2;}
 }

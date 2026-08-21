@@ -3,5 +3,9 @@
 *.o
 *.class
 *.log
+*.key
+audit*.jsonl
+session*.jsonl
+helix*.jsonl
 .idea/
 .vscode/

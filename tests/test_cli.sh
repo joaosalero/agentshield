@@ -44,22 +44,24 @@ drift_output=$(
   close_access="$drift_dir/close-access"
   exit_agent="$drift_dir/exit-agent"
   telemetry="$drift_dir/telemetry.jsonl"
+  audit_key="$drift_dir/audit.key"
+  "$binary" audit init-key "$audit_key" >/dev/null
   : >"$drift_file"
-  "$binary" run --interval 20 --audit "$telemetry" -- sh -c 'while test ! -e "$2"; do sleep 0.01; done; exec 8<"$1"; while test ! -e "$3"; do sleep 0.01; done; exec 8<&-; while test ! -e "$4"; do sleep 0.01; done' sh "$drift_file" "$baseline_ready" "$close_access" "$exit_agent" >"$drift_dir/stdout.jsonl" &
+  "$binary" run --interval 20 --audit "$telemetry" --audit-key "$audit_key" -- sh -c 'while test ! -e "$2"; do sleep 0.01; done; exec 8<"$1"; while test ! -e "$3"; do sleep 0.01; done; exec 8<&-; while test ! -e "$4"; do sleep 0.01; done' sh "$drift_file" "$baseline_ready" "$close_access" "$exit_agent" >"$drift_dir/stdout.jsonl" &
   drift_monitor=$!
   for _ in $(seq 1 200); do test -s "$telemetry" && break; sleep 0.01; done
   test -s "$telemetry"
   : >"$baseline_ready"
-  for _ in $(seq 1 200); do grep -q '"direction":"GRANTED".*"category":"filesystem"' "$telemetry" && break; sleep 0.01; done
-  grep -q '"direction":"GRANTED".*"category":"filesystem"' "$telemetry"
+  for _ in $(seq 1 200); do "$binary" audit export "$telemetry" --audit-key "$audit_key" 2>/dev/null | grep -q '"direction":"GRANTED".*"category":"filesystem"' && break; sleep 0.01; done
+  "$binary" audit export "$telemetry" --audit-key "$audit_key" | grep -q '"direction":"GRANTED".*"category":"filesystem"'
   : >"$close_access"
-  for _ in $(seq 1 200); do grep -q '"direction":"REVOKED".*"category":"filesystem"' "$telemetry" && break; sleep 0.01; done
-  grep -q '"direction":"REVOKED".*"category":"filesystem"' "$telemetry"
+  for _ in $(seq 1 200); do "$binary" audit export "$telemetry" --audit-key "$audit_key" 2>/dev/null | grep -q '"direction":"REVOKED".*"category":"filesystem"' && break; sleep 0.01; done
+  "$binary" audit export "$telemetry" --audit-key "$audit_key" | grep -q '"direction":"REVOKED".*"category":"filesystem"'
   : >"$exit_agent"
   wait "$drift_monitor"
-  cat "$telemetry"
+  "$binary" audit export "$telemetry" --audit-key "$audit_key"
 )
-python3 -c 'import json,sys; rows=[json.loads(x) for x in sys.stdin if x.strip()]; changes=[c for r in rows for c in r["changes"]]; assert any(c["direction"]=="GRANTED" and c["category"]=="filesystem" and c["attention"] for c in changes); assert any(c["direction"]=="REVOKED" and c["category"]=="filesystem" and not c["attention"] for c in changes); print("access drift timeline: OK")' <<<"$drift_output"
+python3 -c 'import json,sys; rows=[json.loads(x)["event"] for x in sys.stdin if x.strip()]; changes=[c for r in rows for c in r["changes"]]; assert any(c["direction"]=="GRANTED" and c["category"]=="filesystem" and c["attention"] for c in changes); assert any(c["direction"]=="REVOKED" and c["category"]=="filesystem" and not c["attention"] for c in changes); print("access drift timeline: OK")' <<<"$drift_output"
 
 set +e
 exec_error=$("$binary" run -- definitely-not-an-agentshield-command 2>&1 >/dev/null)
@@ -86,22 +88,55 @@ echo "bounded TERM-to-KILL escalation: OK"
 audit_dir=$(mktemp -d)
 trap 'rm -rf "$audit_dir"' EXIT
 audit_file="$audit_dir/audit.jsonl"
+audit_key="$audit_dir/audit.key"
+"$binary" audit init-key "$audit_key" >/dev/null
+test "$(stat -c %a "$audit_key")" = 600
+if "$binary" audit init-key "$audit_key" >/dev/null 2>&1; then echo "existing audit key was overwritten" >&2; exit 1; fi
+cp "$audit_key" "$audit_dir/insecure.key"
+chmod 644 "$audit_dir/insecure.key"
+if "$binary" inspect $$ --audit "$audit_dir/insecure-key.jsonl" --audit-key "$audit_dir/insecure.key" >/dev/null 2>&1; then echo "insecure audit key accepted" >&2; exit 1; fi
+ln -s "$audit_key" "$audit_dir/key-link"
+if "$binary" inspect $$ --audit "$audit_dir/key-link.jsonl" --audit-key "$audit_dir/key-link" >/dev/null 2>&1; then echo "audit key symlink accepted" >&2; exit 1; fi
+touch "$audit_dir/empty.jsonl"
+chmod 600 "$audit_dir/empty.jsonl"
+if "$binary" audit verify "$audit_dir/empty.jsonl" --audit-key "$audit_key" >/dev/null 2>&1; then echo "empty audit log reported as verified evidence" >&2; exit 1; fi
 if "$binary" invalid-action --audit "$audit_dir/should-not-exist" >/dev/null 2>&1; then echo "invalid action accepted" >&2; exit 1; fi
 test ! -e "$audit_dir/should-not-exist"
-"$binary" inspect $$ --privacy strict --audit "$audit_file" >/dev/null
+if "$binary" inspect $$ --privacy strict --audit "$audit_file" >/dev/null 2>&1; then echo "audit without key accepted" >&2; exit 1; fi
+"$binary" inspect $$ --privacy strict --audit "$audit_file" --audit-key "$audit_key" >/dev/null
+"$binary" inspect $$ --privacy strict --audit "$audit_file" --audit-key "$audit_key" >/dev/null
 test "$(stat -c %a "$audit_file")" = 600
-python3 -c 'import json,sys; rows=[json.loads(x) for x in open(sys.argv[1])]; assert rows' "$audit_file"
+verification=$("$binary" audit verify "$audit_file" --audit-key "$audit_key")
+python3 -c 'import json,sys; row=json.load(sys.stdin); assert row["verified"] and row["records"]==2 and len(row["finalMac"])==64' <<<"$verification"
+exported=$("$binary" audit export "$audit_file" --audit-key "$audit_key")
+python3 -c 'import json,sys; rows=[json.loads(x) for x in sys.stdin if x.strip()]; assert len(rows)==2; assert all(r["schema"]=="io.helix-sentinel.agentshield/v1" and r["integrity"]["verified"] for r in rows); assert all(r["event"]["process"]["name"]=="[process name redacted]" for r in rows)' <<<"$exported"
+cp "$audit_file" "$audit_dir/tampered.jsonl"
+chmod 600 "$audit_dir/tampered.jsonl"
+python3 -c 'import sys; p=sys.argv[1]; b=bytearray(open(p,"rb").read()); i=b.index(b"eventBase64")+14; b[i]=66 if b[i]!=66 else 65; open(p,"wb").write(b)' "$audit_dir/tampered.jsonl"
+if "$binary" audit verify "$audit_dir/tampered.jsonl" --audit-key "$audit_key" >/dev/null 2>&1; then echo "tampered audit accepted" >&2; exit 1; fi
+"$binary" audit init-key "$audit_dir/wrong.key" >/dev/null
+if "$binary" audit verify "$audit_file" --audit-key "$audit_dir/wrong.key" >/dev/null 2>&1; then echo "wrong audit key accepted" >&2; exit 1; fi
+if "$binary" inspect $$ --audit "$audit_dir/limited.jsonl" --audit-key "$audit_key" --audit-max-bytes 16 >/dev/null 2>&1; then echo "audit retention limit ignored" >&2; exit 1; fi
+if "$binary" inspect $$ --audit-max-bytes 67108864 >/dev/null 2>&1; then echo "orphan audit retention option accepted" >&2; exit 1; fi
+lock_log="$audit_dir/locked.jsonl"
+"$binary" watch $$ --interval 20 --audit "$lock_log" --audit-key "$audit_key" >/dev/null &
+lock_monitor=$!
+for _ in $(seq 1 100); do test -s "$lock_log" && break; sleep 0.01; done
+test -s "$lock_log"
+if "$binary" inspect $$ --audit "$lock_log" --audit-key "$audit_key" >/dev/null 2>&1; then kill "$lock_monitor" 2>/dev/null || true; echo "concurrent audit writer accepted" >&2; exit 1; fi
+kill "$lock_monitor" 2>/dev/null || true
+wait "$lock_monitor" 2>/dev/null || true
 chmod 644 "$audit_file"
-if "$binary" inspect $$ --audit "$audit_file" >/dev/null 2>&1; then echo "insecure audit mode accepted" >&2; exit 1; fi
+if "$binary" inspect $$ --audit "$audit_file" --audit-key "$audit_key" >/dev/null 2>&1; then echo "insecure audit mode accepted" >&2; exit 1; fi
 ln -s "$audit_file" "$audit_dir/link"
-if "$binary" inspect $$ --audit "$audit_dir/link" >/dev/null 2>&1; then echo "audit symlink accepted" >&2; exit 1; fi
+if "$binary" inspect $$ --audit "$audit_dir/link" --audit-key "$audit_key" >/dev/null 2>&1; then echo "audit symlink accepted" >&2; exit 1; fi
 mkfifo "$audit_dir/fifo"
 set +e
-timeout 2 "$binary" inspect $$ --audit "$audit_dir/fifo" >/dev/null 2>&1
+timeout 2 "$binary" inspect $$ --audit "$audit_dir/fifo" --audit-key "$audit_key" >/dev/null 2>&1
 fifo_code=$?
 set -e
 if test "$fifo_code" -eq 0 || test "$fifo_code" -eq 124; then echo "audit FIFO was accepted or blocked" >&2; exit 1; fi
-echo "secure audit file controls: OK"
+echo "authenticated audit, retention, and Helix export controls: OK"
 
 policy_dir=$(mktemp -d)
 policy_file="$policy_dir/enforce.policy"

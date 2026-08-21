@@ -10,6 +10,9 @@ public final class DesktopAppTest {
         if(!command.equals(expected))throw new AssertionError("desktop policy command contract changed");
         var plain=DesktopApp.buildMonitorCommand("agentshield","7","",false);
         if(plain.contains("--policy")||plain.contains("--privacy"))throw new AssertionError("optional controls were added unexpectedly");
+        var audited=DesktopApp.buildMonitorCommand("agentshield","9","",true,"/secure/audit.jsonl","/secure/audit.key");
+        var expectedAudit=List.of("agentshield","watch","9","--interval","1000","--format","tsv","--privacy","strict","--audit","/secure/audit.jsonl","--audit-key","/secure/audit.key");
+        if(!audited.equals(expectedAudit))throw new AssertionError("desktop authenticated audit command contract changed");
         var row=DesktopApp.policyRow("POLICY\tAPPROVAL\tcredential\t[credential name redacted]\tApproval required\tATTENTION".split("\\t",-1));
         var expectedRow=new Object[]{"APPROVAL","credential","[credential name redacted]","Approval required","ATTENTION"};
         if(!Arrays.equals(row,expectedRow))throw new AssertionError("desktop policy row contract changed");
