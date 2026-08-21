@@ -22,6 +22,7 @@ headers, and JDK 17 for the optional desktop dashboard.
 - Credential values are discarded while parsing and are never retained or emitted
 - Effective UID and Linux capability detection
 - Sensitive open-file and network-socket visibility
+- TCP/UDP IPv4/IPv6 endpoint and connection-state attribution
 - Explainable rules with severity, evidence, score, and remediation
 - Access-drift detection for newly granted or revoked credentials, sensitive files,
   sockets, privileges, and monitoring coverage
@@ -36,6 +37,7 @@ headers, and JDK 17 for the optional desktop dashboard.
 - Owner-only audit keys/logs, append pre-verification, and fail-closed size retention
 - Secure supervised execution with `no_new_privs`, no core dumps, descriptor
   isolation, process groups, and optional CPU/memory/process limits
+- Optional delegated cgroup v2 tree limits and reliable descendant termination
 - Read-only `/proc` sensor written in C and policy engine written in C++17
 - Unit, integration, redaction, sanitizer, CMake, and CI validation
 
@@ -59,6 +61,9 @@ make
 ./build/agentshield run -- python3 your_agent.py
 ./build/agentshield run --privacy strict --max-memory-mb 2048 \
   --max-cpu-seconds 600 -- python3 your_agent.py
+systemd-run --user --wait --collect --pipe -p Delegate=yes \
+  ./build/agentshield run --cgroup --max-memory-mb 2048 \
+  --max-processes 128 --max-cpu-percent 200 -- python3 your_agent.py
 ./build/agentshield run --policy policies/baseline.policy \
   --approve credential:MY_SCOPED_TOKEN -- python3 your_agent.py
 ./build/agentshield audit init-key audit.key
@@ -82,6 +87,10 @@ cmake -S . -B build-cmake
 cmake --build build-cmake
 ctest --test-dir build-cmake --output-on-failure
 ```
+
+Release-grade Linux containment validation requires a delegated user service
+manager and must run `make cgroup-test-required`; see the
+[validation evidence](docs/VALIDATION.md).
 
 ## Event model
 
@@ -108,8 +117,9 @@ Reports may expose local paths and should be handled as security telemetry.
 The dashboard presents **observed exposure**, not a complete inventory of every
 permission or credential available through external brokers. The preview monitors processes owned by the current user. Linux may restrict
 inspection through `ptrace_scope`, containers, user namespaces, or `/proc`
-mount options. Socket identifiers show that network access exists but do not yet
-resolve every inode to a remote endpoint. Environment variables can change
+mount options. TCP/UDP sockets are attributed through the process network
+namespace when kernel tables are readable; Unix sockets and restricted or
+short-lived connections may remain inode-only. Environment variables can change
 between snapshots, and a compromised kernel is outside the trust boundary.
 
 See [the policy guide](docs/POLICY.md), [authenticated audit guide](docs/AUDIT.md), [the security architecture](docs/SECURITY_ARCHITECTURE.md),
@@ -118,7 +128,7 @@ See [the policy guide](docs/POLICY.md), [authenticated audit guide](docs/AUDIT.m
 
 ## Roadmap
 
-- eBPF event sensor for file, process, and network activity
+- eBPF event sensor for loss-resistant file, process, and network activity
 - Windows ETW and macOS Endpoint Security adapters
 - signed policy bundles and externally anchored audit receipts
 - native Helix Sentinel transport adapter with mutual authentication

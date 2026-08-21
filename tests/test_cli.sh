@@ -15,7 +15,7 @@ if grep -Eq 'unique-canary-value|unique-argv-canary' <<<"$run_output"; then echo
 echo "supervised exit status and argv redaction: OK"
 
 strict_output=$(env SYNTHETIC_DEMO_PRIVATE_TOKEN=another-canary "$binary" run --interval 10 --privacy strict -- sleep 0.1)
-python3 -c 'import json,sys; rows=[json.loads(x) for x in sys.stdin if x.strip()]; assert rows; assert any(c["name"]=="[credential name redacted]" for r in rows for c in r["credentials"]); assert all(r["process"]["executable"]=="[executable path redacted]" and r["process"]["name"]=="[process name redacted]" for r in rows); print("strict privacy: OK")' <<<"$strict_output"
+python3 -c 'import json,sys; rows=[json.loads(x) for x in sys.stdin if x.strip()]; assert rows; assert any(c["name"]=="[credential name redacted]" for r in rows for c in r["credentials"]); assert all(r["process"]["executable"]=="[executable path redacted]" and r["process"]["name"]=="[process name redacted]" and r["process"]["cgroup"]=="[cgroup path redacted]" for r in rows); print("strict privacy: OK")' <<<"$strict_output"
 if grep -Eq 'SYNTHETIC_DEMO_PRIVATE_TOKEN|another-canary' <<<"$strict_output"; then echo "strict privacy leaked an identifier" >&2; exit 1; fi
 
 "$binary" run --interval 10 -- sh -c 'grep -Eq "^NoNewPrivs:[[:space:]]+1" /proc/self/status' >/dev/null
@@ -35,6 +35,17 @@ if grep -q agent-diagnostic-marker "$inherit_stdout"; then echo "agent output co
 python3 -c 'import json,sys; [json.loads(x) for x in open(sys.argv[1]) if x.strip()]' "$inherit_stdout"
 rm -f "$inherit_stdout" "$inherit_stderr"
 echo "supervised isolation controls: OK"
+
+python3 -c 'import socket,time; s=socket.socket(); s.bind(("127.0.0.1",0)); s.listen(); time.sleep(3)' &
+network_pid=$!
+for _ in $(seq 1 100); do test -d "/proc/$network_pid/fd" && ls -l "/proc/$network_pid/fd" 2>/dev/null | grep -q 'socket:' && break; sleep 0.01; done
+network_output=$("$binary" inspect "$network_pid")
+kill "$network_pid" 2>/dev/null || true
+wait "$network_pid" 2>/dev/null || true
+python3 -c 'import json,sys; d=json.load(sys.stdin); sockets=[r for r in d["resources"] if r["kind"]=="network_socket"]; assert sockets; assert any(r["network"]["attributed"] and r["network"]["protocol"]=="tcp" and r["network"]["localEndpoint"].startswith("127.0.0.1:") and r["network"]["state"]=="LISTEN" and r["identifier"].startswith("tcp://127.0.0.1:") for r in sockets); print("network endpoint attribution: OK")' <<<"$network_output"
+strict_network=$(python3 -c 'import socket,time; s=socket.socket(); s.bind(("127.0.0.1",0)); s.listen(); time.sleep(3)' & target=$!; sleep 0.05; "$binary" inspect "$target" --privacy strict; kill "$target" 2>/dev/null || true; wait "$target" 2>/dev/null || true)
+if grep -q '127.0.0.1' <<<"$strict_network"; then echo "strict network endpoint leaked" >&2; exit 1; fi
+echo "strict network attribution privacy: OK"
 
 drift_output=$(
   drift_dir=$(mktemp -d)

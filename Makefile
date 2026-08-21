@@ -7,7 +7,7 @@ LDFLAGS ?=
 LDLIBS := -lcrypto
 BUILD := build
 OBJECTS := $(BUILD)/sensor.o $(BUILD)/risk_engine.o $(BUILD)/audit_log.o $(BUILD)/main.o
-.PHONY: all test sanitize java java-test run-gui clean
+.PHONY: all test cgroup-test-required sanitize java java-test run-gui clean
 all: $(BUILD)/agentshield
 $(BUILD):
 	mkdir -p $@
@@ -26,6 +26,9 @@ $(BUILD)/test_risk: tests/test_risk.cpp $(BUILD)/sensor.o $(BUILD)/risk_engine.o
 test: all $(BUILD)/test_risk
 	./$(BUILD)/test_risk
 	bash tests/test_cli.sh ./$(BUILD)/agentshield
+	bash tests/test_cgroup.sh ./$(BUILD)/agentshield
+cgroup-test-required: all
+	AGENTSHIELD_REQUIRE_CGROUP_TEST=1 bash tests/test_cgroup.sh ./$(BUILD)/agentshield
 sanitize: CFLAGS := -O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,undefined
 sanitize: CXXFLAGS := -O1 -g -std=c++17 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,undefined
 sanitize: LDFLAGS := -fsanitize=address,undefined

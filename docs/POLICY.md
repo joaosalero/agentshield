@@ -27,6 +27,8 @@ default network approval
 
 credential "SYNTHETIC_DEMO_API_TOKEN" allow
 resource-prefix "/reviewed/workspace/" allow
+network-prefix "tcp://127.0.0.1:" allow
+network-endpoint "tcp://203.0.113.8:443" approval
 ```
 
 - `mode audit` reports decisions without stopping a process.
@@ -37,6 +39,11 @@ resource-prefix "/reviewed/workspace/" allow
   the launch.
 - Credential rules are exact and case-sensitive.
 - Resource rules use absolute path prefixes; the longest matching prefix wins.
+- Network rules use attributed `tcp://`, `tcp6://`, `udp://`, or `udp6://`
+  identifiers. `network-endpoint` is an exact match and should be preferred for
+  a single host and port. `network-prefix` deliberately matches textual prefixes
+  such as every loopback TCP port; the longest matching prefix wins. Unattributed sockets
+  retain their inode identifier and therefore fall back to `default network`.
 - Deny decisions cannot be overridden.
 - Approval decisions require a launch-scoped `--approve category:value` or
   `--approve category:*`. Approvals are never persisted.

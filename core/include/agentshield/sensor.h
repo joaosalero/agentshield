@@ -10,6 +10,7 @@ extern "C" {
 
 #define AS_MAX_NAME 256
 #define AS_MAX_PATH 1024
+#define AS_MAX_ENDPOINT 128
 #define AS_MAX_ITEMS 128
 #define AS_COVERAGE_STATUS 1U
 #define AS_COVERAGE_ENVIRONMENT 2U
@@ -32,6 +33,11 @@ typedef struct {
     char path[AS_MAX_PATH];
     as_resource_kind kind;
     uint8_t risk;
+    uint64_t socket_inode;
+    char network_protocol[8];
+    char local_endpoint[AS_MAX_ENDPOINT];
+    char remote_endpoint[AS_MAX_ENDPOINT];
+    char connection_state[24];
 } as_resource;
 
 typedef struct {
@@ -42,6 +48,7 @@ typedef struct {
     char process_name[AS_MAX_NAME];
     char executable[AS_MAX_PATH];
     char working_directory[AS_MAX_PATH];
+    char cgroup_path[AS_MAX_PATH];
     as_credential credentials[AS_MAX_ITEMS];
     size_t credential_count;
     as_resource resources[AS_MAX_ITEMS];

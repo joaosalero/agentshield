@@ -13,7 +13,7 @@ struct Assessment { as_snapshot snapshot{}; std::vector<Finding> findings; int r
 enum class ChangeDirection { granted, revoked };
 struct ExposureChange { ChangeDirection direction; std::string category, identifier; Severity severity; bool attention; };
 enum class PolicyAction { allow, approval, deny };
-struct PolicyRule { std::string category, pattern; PolicyAction action; };
+struct PolicyRule { std::string category, pattern; PolicyAction action; bool prefix_match = false; };
 struct Policy {
     bool enforce = false;
     bool require_full_coverage = true;

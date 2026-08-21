@@ -16,6 +16,8 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <fstream>
+#include <iterator>
 #include <unistd.h>
 #include <sys/prctl.h>
 #include <sys/ptrace.h>
@@ -33,7 +35,8 @@ std::uint64_t audit_sequence=0;
 std::string audit_previous_mac(64,'0');
 std::uint64_t audit_size=0;
 std::uint64_t audit_max_bytes=64U*1024U*1024U;
-struct RunLimits { int memory_mb=0; int cpu_seconds=0; int processes=0; bool no_new_privileges=true; bool inherit_output=false; bool inherit_input=false; };
+struct CgroupScope { std::string parent,monitor,agent,disable_controllers; bool active=false; } cgroup_scope;
+struct RunLimits { int memory_mb=0; int cpu_seconds=0; int processes=0; int cpu_percent=0; bool no_new_privileges=true; bool inherit_output=false; bool inherit_input=false; bool cgroup=false; };
 void stop(int){running=0;}
 long long now_ms(){return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();}
 
@@ -55,6 +58,8 @@ void usage(){
       "  --max-memory-mb N          Supervised process address-space limit\n"
       "  --max-cpu-seconds N        Supervised process CPU limit\n"
       "  --max-processes N          Supervised process count limit\n"
+      "  --cgroup                   Put the complete process tree in a delegated cgroup v2\n"
+      "  --max-cpu-percent N        Cgroup CPU quota from 1 to 1000 percent\n"
       "  --agent-output MODE        discard (default) or inherit to stderr\n"
       "  --agent-input MODE         discard (default) or inherit\n"
       "  --allow-new-privs          Disable the default no_new_privs control\n\n"
@@ -69,6 +74,26 @@ std::uint64_t parse_positive_size(const std::string& value){try{size_t used=0;un
 void write_all(int fd,const std::string& data){
     size_t offset=0;while(offset<data.size()){ssize_t count=write(fd,data.data()+offset,data.size()-offset);if(count<0&&errno==EINTR)continue;if(count<=0)throw std::runtime_error("secure audit write failed");offset+=static_cast<size_t>(count);}
 }
+void write_control(const std::string& path,const std::string& value){int fd=open(path.c_str(),O_WRONLY|O_CLOEXEC|O_NOFOLLOW);if(fd<0)throw std::runtime_error("cannot open cgroup control "+path+": "+std::strerror(errno));std::size_t offset=0;while(offset<value.size()){ssize_t count=write(fd,value.data()+offset,value.size()-offset);if(count<0&&errno==EINTR)continue;if(count<=0){int saved=errno;close(fd);throw std::runtime_error("cannot write cgroup control "+path+": "+std::strerror(saved));}offset+=static_cast<std::size_t>(count);}close(fd);}
+bool cgroup_populated(const std::string& path){std::ifstream input(path+"/cgroup.events");std::string name;int value=0;while(input>>name>>value)if(name=="populated")return value!=0;return false;}
+std::string current_cgroup_path(){std::ifstream input("/proc/self/cgroup");std::string line;while(std::getline(input,line)){if(line.rfind("0::/",0)==0){std::string relative=line.substr(3);if(relative.find("..")!=std::string::npos||relative.find_first_of("\r\n")!=std::string::npos)break;return "/sys/fs/cgroup"+relative;}}throw std::runtime_error("unified cgroup v2 membership is unavailable");}
+void cleanup_cgroup(bool strict=false){if(!cgroup_scope.active)return;std::string issue;try{std::string kill_path=cgroup_scope.agent+"/cgroup.kill";if(access(kill_path.c_str(),W_OK)==0)write_control(kill_path,"1\n");}catch(const std::exception& error){issue=error.what();}for(int attempt=0;attempt<100&&cgroup_populated(cgroup_scope.agent);++attempt)std::this_thread::sleep_for(std::chrono::milliseconds(10));if(rmdir(cgroup_scope.agent.c_str())!=0&&errno!=ENOENT&&issue.empty())issue="cannot remove agent cgroup: "+std::string(std::strerror(errno));if(!cgroup_scope.disable_controllers.empty()){try{write_control(cgroup_scope.parent+"/cgroup.subtree_control",cgroup_scope.disable_controllers+"\n");}catch(const std::exception& error){if(issue.empty())issue=error.what();}}try{write_control(cgroup_scope.parent+"/cgroup.procs",std::to_string(getpid())+"\n");}catch(const std::exception& error){if(issue.empty())issue=error.what();}if(rmdir(cgroup_scope.monitor.c_str())!=0&&errno!=ENOENT&&issue.empty())issue="cannot remove monitor cgroup: "+std::string(std::strerror(errno));cgroup_scope={};if(strict&&!issue.empty())throw std::runtime_error("cgroup cleanup verification failed: "+issue);}
+void prepare_cgroup(const RunLimits& limits){
+    cgroup_scope.parent=current_cgroup_path();std::string suffix=std::to_string(getpid());cgroup_scope.monitor=cgroup_scope.parent+"/agentshield-monitor-"+suffix;cgroup_scope.agent=cgroup_scope.parent+"/agentshield-agent-"+suffix;
+    if(access((cgroup_scope.parent+"/cgroup.controllers").c_str(),R_OK)!=0||access(cgroup_scope.parent.c_str(),W_OK)!=0)throw std::runtime_error("--cgroup requires a writable delegated cgroup v2 scope; launch AgentShield through a trusted service manager with delegation");
+    if(mkdir(cgroup_scope.monitor.c_str(),0700)!=0)throw std::runtime_error("cannot create monitor cgroup: "+std::string(std::strerror(errno)));
+    cgroup_scope.active=true;
+    try{
+        write_control(cgroup_scope.monitor+"/cgroup.procs",std::to_string(getpid())+"\n");
+        std::ifstream enabled_input(cgroup_scope.parent+"/cgroup.subtree_control");std::string enabled((std::istreambuf_iterator<char>(enabled_input)),std::istreambuf_iterator<char>());auto missing=[&](const std::string& name){std::istringstream words(enabled);std::string word;while(words>>word)if(word==name)return false;return true;};std::string controllers;if(limits.memory_mb&&missing("memory")){controllers+="+memory ";cgroup_scope.disable_controllers+="-memory ";}if(limits.processes&&missing("pids")){controllers+="+pids ";cgroup_scope.disable_controllers+="-pids ";}if(limits.cpu_percent&&missing("cpu")){controllers+="+cpu ";cgroup_scope.disable_controllers+="-cpu ";}if(!controllers.empty())write_control(cgroup_scope.parent+"/cgroup.subtree_control",controllers+"\n");
+        if(mkdir(cgroup_scope.agent.c_str(),0700)!=0)throw std::runtime_error("cannot create agent cgroup: "+std::string(std::strerror(errno)));
+        if(limits.memory_mb)write_control(cgroup_scope.agent+"/memory.max",std::to_string(static_cast<unsigned long long>(limits.memory_mb)*1024U*1024U)+"\n");
+        if(limits.processes)write_control(cgroup_scope.agent+"/pids.max",std::to_string(limits.processes)+"\n");
+        if(limits.cpu_percent)write_control(cgroup_scope.agent+"/cpu.max",std::to_string(static_cast<unsigned long long>(limits.cpu_percent)*1000U)+" 100000\n");
+        if(access((cgroup_scope.agent+"/memory.oom.group").c_str(),W_OK)==0)write_control(cgroup_scope.agent+"/memory.oom.group","1\n");
+    }catch(...){cleanup_cgroup();throw;}
+}
+void attach_cgroup(pid_t pid){if(cgroup_scope.active)write_control(cgroup_scope.agent+"/cgroup.procs",std::to_string(pid)+"\n");}
 void finalize_audit(){if(audit_fd<0)return;if(fsync(audit_fd)!=0)throw std::runtime_error("audit synchronization failed");close(audit_fd);audit_fd=-1;if(audit_key){OPENSSL_cleanse(audit_key->data(),audit_key->size());audit_key.reset();}}
 std::string read_secure_file(const std::string& path,std::size_t maximum,const char* purpose,bool root_allowed,bool owner_only=false){
     int fd=open(path.c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK);
@@ -154,12 +179,14 @@ void harden_monitor(){
 }
 void terminate_group(pid_t group){
     if(group<=0)return;
-    if(kill(-group,SIGTERM)!=0&&errno==ESRCH)return;
+    bool group_gone=false;
+    if(kill(-group,SIGTERM)!=0&&errno==ESRCH)group_gone=true;
     for(int attempt=0;attempt<20;++attempt){
-        if(kill(-group,0)!=0&&errno==ESRCH)return;
+        if(group_gone||(kill(-group,0)!=0&&errno==ESRCH)){group_gone=true;break;}
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
-    if(kill(-group,SIGKILL)!=0&&errno!=ESRCH)std::cerr<<"agentshield: warning: process-group kill failed\n";
+    if(!group_gone&&kill(-group,SIGKILL)!=0&&errno!=ESRCH)std::cerr<<"agentshield: warning: process-group kill failed\n";
+    if(cgroup_scope.active){try{std::string path=cgroup_scope.agent+"/cgroup.kill";if(access(path.c_str(),W_OK)==0)write_control(path,"1\n");}catch(...){std::cerr<<"agentshield: warning: cgroup kill failed\n";}}
 }
 }
 
@@ -180,12 +207,13 @@ int main(int argc,char** argv){
             return 0;
         }
         int i=2;if(action=="inspect"||action=="watch"){if(i>=argc)throw std::invalid_argument("PID is required");pid=parse_positive(argv[i++]);}
-        for(;i<argc;++i){std::string argument=argv[i];if(argument=="--"){command_index=i+1;break;}if(argument=="--allow-new-privs"){limits.no_new_privileges=false;continue;}
-            if((argument=="--interval"||argument=="--format"||argument=="--privacy"||argument=="--audit"||argument=="--audit-key"||argument=="--audit-max-bytes"||argument=="--policy"||argument=="--approve"||argument=="--max-memory-mb"||argument=="--max-cpu-seconds"||argument=="--max-processes"||argument=="--agent-output"||argument=="--agent-input")&&i+1<argc){std::string value=argv[++i];if(argument=="--interval")interval=parse_positive(value);else if(argument=="--format")format=value;else if(argument=="--privacy")privacy_text=value;else if(argument=="--audit")audit_path=value;else if(argument=="--audit-key")audit_key_path=value;else if(argument=="--audit-max-bytes"){configured_audit_max=parse_positive_size(value);audit_max_configured=true;}else if(argument=="--policy")policy_path=value;else if(argument=="--approve"){validate_approval(value);approvals.insert(value);}else if(argument=="--max-memory-mb")limits.memory_mb=parse_positive(value);else if(argument=="--max-cpu-seconds")limits.cpu_seconds=parse_positive(value);else if(argument=="--max-processes")limits.processes=parse_positive(value);else if(argument=="--agent-output"){if(value=="inherit")limits.inherit_output=true;else if(value!="discard")throw std::invalid_argument("agent output must be discard or inherit");}else{if(value=="inherit")limits.inherit_input=true;else if(value!="discard")throw std::invalid_argument("agent input must be discard or inherit");}continue;}throw std::invalid_argument("unknown or incomplete option: "+argument);}
+        for(;i<argc;++i){std::string argument=argv[i];if(argument=="--"){command_index=i+1;break;}if(argument=="--allow-new-privs"){limits.no_new_privileges=false;continue;}if(argument=="--cgroup"){limits.cgroup=true;continue;}
+            if((argument=="--interval"||argument=="--format"||argument=="--privacy"||argument=="--audit"||argument=="--audit-key"||argument=="--audit-max-bytes"||argument=="--policy"||argument=="--approve"||argument=="--max-memory-mb"||argument=="--max-cpu-seconds"||argument=="--max-processes"||argument=="--max-cpu-percent"||argument=="--agent-output"||argument=="--agent-input")&&i+1<argc){std::string value=argv[++i];if(argument=="--interval")interval=parse_positive(value);else if(argument=="--format")format=value;else if(argument=="--privacy")privacy_text=value;else if(argument=="--audit")audit_path=value;else if(argument=="--audit-key")audit_key_path=value;else if(argument=="--audit-max-bytes"){configured_audit_max=parse_positive_size(value);audit_max_configured=true;}else if(argument=="--policy")policy_path=value;else if(argument=="--approve"){validate_approval(value);approvals.insert(value);}else if(argument=="--max-memory-mb")limits.memory_mb=parse_positive(value);else if(argument=="--max-cpu-seconds")limits.cpu_seconds=parse_positive(value);else if(argument=="--max-processes")limits.processes=parse_positive(value);else if(argument=="--max-cpu-percent"){limits.cpu_percent=parse_positive(value);if(limits.cpu_percent>1000)throw std::invalid_argument("max CPU percent cannot exceed 1000");}else if(argument=="--agent-output"){if(value=="inherit")limits.inherit_output=true;else if(value!="discard")throw std::invalid_argument("agent output must be discard or inherit");}else{if(value=="inherit")limits.inherit_input=true;else if(value!="discard")throw std::invalid_argument("agent input must be discard or inherit");}continue;}throw std::invalid_argument("unknown or incomplete option: "+argument);}
         if(format!="json"&&format!="tsv")throw std::invalid_argument("format must be json or tsv");
         if(privacy_text!="standard"&&privacy_text!="strict")throw std::invalid_argument("privacy must be standard or strict");
         if(action!="inspect"&&action!="watch"&&action!="run")throw std::invalid_argument("unknown action: "+action);
-        if(action!="run"&&(limits.memory_mb||limits.cpu_seconds||limits.processes||!limits.no_new_privileges||limits.inherit_output||limits.inherit_input))throw std::invalid_argument("process controls are valid only with run");
+        if(action!="run"&&(limits.memory_mb||limits.cpu_seconds||limits.processes||limits.cpu_percent||limits.cgroup||!limits.no_new_privileges||limits.inherit_output||limits.inherit_input))throw std::invalid_argument("process controls are valid only with run");
+        if(limits.cpu_percent&&!limits.cgroup)throw std::invalid_argument("--max-cpu-percent requires --cgroup");
         if(!approvals.empty()&&policy_path.empty())throw std::invalid_argument("--approve requires --policy");
         if(audit_path.empty()!=audit_key_path.empty())throw std::invalid_argument("--audit and --audit-key must be provided together");
         if(audit_path.empty()&&audit_max_configured)throw std::invalid_argument("--audit-max-bytes requires --audit");
@@ -197,21 +225,22 @@ int main(int argc,char** argv){
         std::signal(SIGINT,stop);std::signal(SIGTERM,stop);pid_t child=-1;agentshield::Assessment previous;
         if(action=="run"){
             if(command_index<0||command_index>=argc)throw std::invalid_argument("COMMAND is required after --");
+            if(limits.cgroup)prepare_cgroup(limits);
             int status_pipe[2];if(pipe2(status_pipe,O_CLOEXEC)!=0)throw std::runtime_error("cannot create secure exec status channel");
             child=fork();if(child<0){close(status_pipe[0]);close(status_pipe[1]);throw std::runtime_error("fork failed");}
-            bool gate_before_exec=policy&&policy->enforce;
+            bool policy_gate=policy&&policy->enforce;bool gate_before_exec=policy_gate||limits.cgroup;
             if(child==0){close(status_pipe[0]);harden_child(limits,status_pipe[1],gate_before_exec);execvp(argv[command_index],&argv[command_index]);int exec_error=errno;ssize_t ignored=write(status_pipe[1],&exec_error,sizeof exec_error);(void)ignored;_exit(127);}
             close(status_pipe[1]);
             if(setpgid(child,child)!=0&&errno!=EACCES&&errno!=ESRCH){close(status_pipe[0]);kill(child,SIGTERM);waitpid(child,nullptr,0);throw std::runtime_error("could not isolate agent process group");}
-            if(gate_before_exec){int gate_status=0;if(waitpid(child,&gate_status,WUNTRACED)!=child||!WIFSTOPPED(gate_status)||WSTOPSIG(gate_status)!=SIGSTOP){close(status_pipe[0]);kill(-child,SIGKILL);waitpid(child,nullptr,0);throw std::runtime_error("could not establish the pre-exec policy gate");}if(ptrace(PTRACE_CONT,child,nullptr,nullptr)!=0){close(status_pipe[0]);kill(-child,SIGKILL);waitpid(child,nullptr,0);throw std::runtime_error("could not continue the pre-exec policy gate");}}
+            if(gate_before_exec){int gate_status=0;if(waitpid(child,&gate_status,WUNTRACED)!=child||!WIFSTOPPED(gate_status)||WSTOPSIG(gate_status)!=SIGSTOP){close(status_pipe[0]);kill(-child,SIGKILL);waitpid(child,nullptr,0);throw std::runtime_error("could not establish the pre-exec supervision gate");}try{attach_cgroup(child);}catch(...){close(status_pipe[0]);if(ptrace(PTRACE_DETACH,child,nullptr,SIGKILL)!=0)kill(-child,SIGKILL);waitpid(child,nullptr,0);throw;}if(ptrace(PTRACE_CONT,child,nullptr,nullptr)!=0){close(status_pipe[0]);kill(-child,SIGKILL);waitpid(child,nullptr,0);throw std::runtime_error("could not continue the pre-exec supervision gate");}}
             int exec_error=0;ssize_t status_count=read(status_pipe[0],&exec_error,sizeof exec_error);close(status_pipe[0]);
             if(status_count==sizeof exec_error){waitpid(child,nullptr,0);throw std::runtime_error("cannot execute supervised command: "+std::string(std::strerror(exec_error)));}
             pid=child;
-            if(gate_before_exec){int exec_status=0;if(waitpid(child,&exec_status,0)!=child||!WIFSTOPPED(exec_status)||WSTOPSIG(exec_status)!=SIGTRAP){kill(-child,SIGKILL);waitpid(child,nullptr,0);throw std::runtime_error("supervised command did not reach the protected exec boundary");}int initial_result=emit(pid,format,privacy,&previous,&*policy,approvals);if(initial_result!=0){if(ptrace(PTRACE_DETACH,child,nullptr,SIGKILL)!=0)kill(-child,SIGKILL);waitpid(child,nullptr,0);finalize_audit();return initial_result;}if(ptrace(PTRACE_DETACH,child,nullptr,nullptr)!=0){kill(-child,SIGKILL);waitpid(child,nullptr,0);throw std::runtime_error("could not release the protected exec boundary");}}
+            if(gate_before_exec){int exec_status=0;if(waitpid(child,&exec_status,0)!=child||!WIFSTOPPED(exec_status)||WSTOPSIG(exec_status)!=SIGTRAP){kill(-child,SIGKILL);waitpid(child,nullptr,0);throw std::runtime_error("supervised command did not reach the protected exec boundary");}if(policy_gate){int initial_result=emit(pid,format,privacy,&previous,&*policy,approvals);if(initial_result!=0){if(ptrace(PTRACE_DETACH,child,nullptr,SIGKILL)!=0)kill(-child,SIGKILL);waitpid(child,nullptr,0);finalize_audit();cleanup_cgroup(true);return initial_result;}}if(ptrace(PTRACE_DETACH,child,nullptr,nullptr)!=0){kill(-child,SIGKILL);waitpid(child,nullptr,0);throw std::runtime_error("could not release the protected exec boundary");}}
         }
         int result=0;bool child_reaped=false;
         while(running){if(child>0){int status=0;pid_t state=waitpid(child,&status,WNOHANG);if(state==child){result=exit_result(status);child_reaped=true;terminate_group(child);break;}}int emitted=emit(pid,format,privacy,&previous,policy?&*policy:nullptr,approvals);if(emitted!=0){if(child>0){terminate_group(child);int status=0;if(waitpid(child,&status,0)==child)child_reaped=true;}result=emitted;break;}std::this_thread::sleep_for(std::chrono::milliseconds(interval));}
         if(child>0&&!child_reaped){terminate_group(child);int status=0;if(waitpid(child,&status,0)==child)result=exit_result(status);else result=1;}
-        finalize_audit();return result;
-    }catch(const std::exception& error){if(audit_fd>=0){close(audit_fd);audit_fd=-1;}if(audit_key){OPENSSL_cleanse(audit_key->data(),audit_key->size());audit_key.reset();}std::cerr<<"agentshield: "<<error.what()<<'\n';return 2;}
+        finalize_audit();cleanup_cgroup(true);return result;
+    }catch(const std::exception& error){cleanup_cgroup();if(audit_fd>=0){close(audit_fd);audit_fd=-1;}if(audit_key){OPENSSL_cleanse(audit_key->data(),audit_key->size());audit_key.reset();}std::cerr<<"agentshield: "<<error.what()<<'\n';return 2;}
 }

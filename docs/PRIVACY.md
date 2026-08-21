@@ -6,7 +6,8 @@ AgentShield applies data minimization at collection and serialization boundaries
 
 - process identifiers, executable path, working directory, UID and capabilities;
 - names of environment variables classified as credential-like;
-- identifiers of security-relevant open descriptors;
+- identifiers of security-relevant open descriptors, including attributed
+  TCP/UDP endpoints and cgroup membership when observable;
 - derived findings, severity and risk score.
 
 Environment values and command arguments are discarded during parsing and are
@@ -20,7 +21,7 @@ not retained in snapshots, events, audit files or the desktop interface.
   directories and resource identifiers with explicit redaction markers. Use it for shared logs,
   demonstrations and external SIEM transport.
 
-Strict events retain PID/PPID, UID, capability flags, timestamps, severity and
+Strict events redact network endpoints and cgroup paths. They retain PID/PPID, UID, capability flags, timestamps, severity and
 risk scores because they are required for correlation. Deployments where these
 identifiers are personal data must apply access control and retention policy.
 

@@ -141,10 +141,23 @@ int main() {
     auto prefix_denied=agentshield::evaluate_policy(assessment,prefix_policy,approvals);
     assert(prefix_denied.blocked&&prefix_denied.decisions.size()==1&&prefix_denied.decisions[0].action==agentshield::PolicyAction::deny);
 
-    as_snapshot socket_snapshot=baseline;socket_snapshot.resource_count=1;std::strcpy(socket_snapshot.resources[0].path,"socket:[123]");socket_snapshot.resources[0].kind=AS_RESOURCE_SOCKET;socket_snapshot.resources[0].risk=2;
+    as_snapshot socket_snapshot=baseline;socket_snapshot.resource_count=1;std::strcpy(socket_snapshot.resources[0].path,"tcp://203.0.113.8:443");socket_snapshot.resources[0].kind=AS_RESOURCE_SOCKET;socket_snapshot.resources[0].risk=2;std::strcpy(socket_snapshot.resources[0].network_protocol,"tcp");std::strcpy(socket_snapshot.resources[0].local_endpoint,"192.0.2.4:42000");std::strcpy(socket_snapshot.resources[0].remote_endpoint,"203.0.113.8:443");std::strcpy(socket_snapshot.resources[0].connection_state,"ESTABLISHED");
+    auto socket_json=agentshield::to_json(agentshield::assess(socket_snapshot),4);
+    assert(socket_json.find("\"attributed\":true")!=std::string::npos&&socket_json.find("203.0.113.8:443")!=std::string::npos);
+    auto strict_socket_json=agentshield::to_json(agentshield::assess(socket_snapshot),4,agentshield::Privacy::strict);
+    assert(strict_socket_json.find("203.0.113.8") == std::string::npos && strict_socket_json.find("192.0.2.4") == std::string::npos);
     auto network_policy=policy;network_policy.default_network=agentshield::PolicyAction::approval;
     auto network_approved=agentshield::evaluate_policy(agentshield::assess(socket_snapshot),network_policy,{"network:*"});
     assert(!network_approved.blocked&&network_approved.decisions.size()==1&&network_approved.decisions[0].approved);
+    std::istringstream network_prefix_text(
+        "version 1\nmode enforce\nrequire-full-coverage true\nallow-root false\n"
+        "allow-capabilities false\nmax-risk-score 100\ndefault credential allow\n"
+        "default sensitive-file allow\ndefault network deny\nnetwork-endpoint tcp://203.0.113.8:443 allow\n");
+    auto exact_network_policy=agentshield::parse_policy(network_prefix_text);
+    assert(!agentshield::evaluate_policy(agentshield::assess(socket_snapshot),exact_network_policy).blocked);
+    std::strcpy(socket_snapshot.resources[0].path,"tcp://203.0.113.8:4430");
+    assert(agentshield::evaluate_policy(agentshield::assess(socket_snapshot),exact_network_policy).blocked);
+    expect_invalid("version 1\nnetwork-prefix https://example.invalid deny\n");
 
     as_snapshot incomplete{};
     incomplete.pid = 43;

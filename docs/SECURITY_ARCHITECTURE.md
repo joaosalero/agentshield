@@ -78,8 +78,25 @@ not provide the same pre-instruction guarantee for subsequent exec transitions.
 ## Deliberate limits
 
 Process-group termination uses a bounded `SIGTERM` grace period followed by
-`SIGKILL`. A hostile descendant can create a new session and escape a process
-group; complete tree containment requires the planned cgroup adapter.
+`SIGKILL`. With `--cgroup`, AgentShield first verifies a writable delegated
+cgroup v2 scope, moves itself to a monitor leaf, creates a separate agent leaf,
+applies memory/PID/CPU controls, and holds the child at the exec boundary until
+membership is confirmed. `cgroup.kill` terminates descendants even after they
+create a new session, and temporary leaves are removed on exit. Setup or cleanup
+failure is reported and setup fails closed.
+
+Delegation must come from a trusted service manager; the documented
+`systemd-run --user ... -p Delegate=yes` flow supplies it. A hostile process
+running as the same host UID may be able to manipulate user-delegated cgroup
+files and deliberately escape. Strong hostile-code isolation additionally
+requires a distinct UID/user namespace or a privileged supervisor that does not
+delegate the containing hierarchy to the agent.
+
+Network attribution correlates socket inode descriptors with `/proc/PID/net`
+tables from the target network namespace. It reports TCP/UDP protocol, local and
+remote endpoints, and kernel connection state. Strict privacy removes every
+endpoint and cgroup path. Sampling can miss short-lived sockets and currently
+does not decode Unix sockets.
 
 This version observes and constrains a launched process but is not a kernel
 mandatory-access-control system. Filesystem and network enforcement require the
