@@ -42,6 +42,20 @@ limit, failure to isolate the process group and unsupported option combinations
 terminate the operation with a non-zero code. Monitoring does not claim that a
 failed snapshot is safe.
 
+Policy files cross an administrative trust boundary and therefore use secure
+open/type/owner/mode/size validation before parsing. The versioned parser
+rejects unknown or duplicate configuration. In enforce mode, deny decisions
+and unapproved approval decisions are emitted to telemetry before the monitor
+terminates the supervised process group. Launch-scoped approvals exist only in
+monitor memory and cannot override deny decisions.
+
+Enforced launches use a parent-child `ptrace` exec gate. The initial executable
+is stopped after the kernel completes `exec` but before it runs userspace code;
+AgentShield evaluates the resulting process image and environment, then either
+detaches and resumes it or kills it. If the gate cannot be established, launch
+fails closed. Continuous sampling remains responsible for later drift and does
+not provide the same pre-instruction guarantee for subsequent exec transitions.
+
 ## Deliberate limits
 
 Process-group termination uses a bounded `SIGTERM` grace period followed by

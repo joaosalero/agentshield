@@ -6,7 +6,7 @@ CPPFLAGS := -Icore/include -Iengine/include
 LDFLAGS ?=
 BUILD := build
 OBJECTS := $(BUILD)/sensor.o $(BUILD)/risk_engine.o $(BUILD)/main.o
-.PHONY: all test sanitize java run-gui clean
+.PHONY: all test sanitize java java-test run-gui clean
 all: $(BUILD)/agentshield
 $(BUILD):
 	mkdir -p $@
@@ -29,6 +29,9 @@ sanitize: LDFLAGS := -fsanitize=address,undefined
 sanitize: clean test
 java: | $(BUILD)
 	javac --release 17 -d $(BUILD)/java desktop/src/main/java/io/agentshield/DesktopApp.java
+java-test: java
+	javac --release 17 -cp $(BUILD)/java -d $(BUILD)/java desktop/src/test/java/io/agentshield/DesktopAppTest.java
+	java -Djava.awt.headless=true -cp $(BUILD)/java io.agentshield.DesktopAppTest
 run-gui: all java
 	java -cp $(BUILD)/java io.agentshield.DesktopApp ./$(BUILD)/agentshield
 clean:

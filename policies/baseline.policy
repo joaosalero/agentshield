@@ -1,0 +1,16 @@
+# AgentShield policy language v1
+version 1
+mode enforce
+require-full-coverage true
+allow-root false
+allow-capabilities false
+max-risk-score 74
+
+# Unknown sensitive access requires an explicit --approve category:value grant.
+default credential approval
+default sensitive-file approval
+default network approval
+
+# Known non-production examples may be pre-approved by name or path prefix.
+credential "SYNTHETIC_DEMO_API_TOKEN" allow
+resource-prefix "/tmp/agentshield-demo/" allow

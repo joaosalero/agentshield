@@ -1,7 +1,10 @@
 #include "risk_engine.hpp"
 #include <algorithm>
+#include <cctype>
+#include <iomanip>
 #include <map>
 #include <sstream>
+#include <stdexcept>
 
 namespace agentshield {
 namespace {
@@ -27,6 +30,46 @@ std::string private_change_identifier(const ExposureChange& change, Privacy priv
     if (change.category == "credential") return "[credential name redacted]";
     if (change.category == "filesystem" || change.category == "network") return "[resource identifier redacted]";
     return change.identifier;
+}
+std::string action_name(PolicyAction action) { return action==PolicyAction::allow?"ALLOW":action==PolicyAction::approval?"APPROVAL":"DENY"; }
+PolicyAction parse_action(const std::string& value) {
+    if(value=="allow")return PolicyAction::allow;
+    if(value=="approval")return PolicyAction::approval;
+    if(value=="deny")return PolicyAction::deny;
+    throw std::invalid_argument("policy action must be allow, approval, or deny");
+}
+bool parse_bool(const std::string& value) {
+    if(value=="true")return true;
+    if(value=="false")return false;
+    throw std::invalid_argument("policy boolean must be true or false");
+}
+void require_end(std::istringstream& line) { std::string extra;if(line>>extra)throw std::invalid_argument("unexpected policy token: "+extra); }
+bool valid_credential_name(const std::string& value) {
+    if(value.empty()||!(std::isalpha(static_cast<unsigned char>(value[0]))||value[0]=='_'))return false;
+    return std::all_of(value.begin()+1,value.end(),[](unsigned char c){return std::isalnum(c)||c=='_';});
+}
+PolicyAction rule_action(const Policy& policy,const std::string& category,const std::string& identifier,PolicyAction fallback) {
+    const PolicyRule* best=nullptr;
+    for(const auto& rule:policy.rules){
+        if(rule.category!=category)continue;
+        bool matches=category=="credential"?rule.pattern==identifier:identifier.compare(0,rule.pattern.size(),rule.pattern)==0;
+        if(matches&&(!best||rule.pattern.size()>best->pattern.size()))best=&rule;
+    }
+    return best?best->action:fallback;
+}
+std::string private_policy_identifier(const PolicyDecision& decision,Privacy privacy){
+    if(privacy!=Privacy::strict)return decision.identifier;
+    if(decision.category=="credential")return "[credential name redacted]";
+    if(decision.category=="filesystem"||decision.category=="network")return "[resource identifier redacted]";
+    return decision.identifier;
+}
+void add_policy_decision(PolicyEvaluation& evaluation,PolicyAction action,std::string category,std::string identifier,std::string reason,const Policy& policy,const std::set<std::string>& approvals){
+    if(action==PolicyAction::allow)return;
+    std::string exact=category+":"+identifier,wildcard=category+":*";
+    bool approved=action==PolicyAction::approval&&(approvals.count(exact)||approvals.count(wildcard));
+    bool blocking=policy.enforce&&!approved;
+    evaluation.decisions.push_back({action,std::move(category),std::move(identifier),std::move(reason),approved,blocking});
+    evaluation.blocked|=blocking;
 }
 }
 
@@ -92,6 +135,38 @@ std::vector<ExposureChange> detect_changes(const Assessment& previous, const Ass
     return changes;
 }
 
+Policy parse_policy(std::istream& input) {
+    Policy policy;std::string text;size_t number=0;bool version_seen=false;std::set<std::string> singleton;
+    while(std::getline(input,text)){
+        ++number;if(text.size()>4096)throw std::invalid_argument("policy line "+std::to_string(number)+" is too long");
+        auto first=text.find_first_not_of(" \t\r");if(first==std::string::npos||text[first]=='#')continue;
+        std::istringstream line(text.substr(first));std::string command;line>>command;
+        try{
+            if(command=="version"){int version=0;if(!(line>>version)||version!=1)throw std::invalid_argument("policy version must be 1");require_end(line);if(version_seen)throw std::invalid_argument("duplicate version");version_seen=true;}
+            else if(command=="mode"){std::string value;if(!(line>>value)||(value!="audit"&&value!="enforce"))throw std::invalid_argument("mode must be audit or enforce");require_end(line);if(!singleton.insert(command).second)throw std::invalid_argument("duplicate mode");policy.enforce=value=="enforce";}
+            else if(command=="require-full-coverage"||command=="allow-root"||command=="allow-capabilities"){std::string value;if(!(line>>value))throw std::invalid_argument("missing boolean");require_end(line);if(!singleton.insert(command).second)throw std::invalid_argument("duplicate "+command);bool parsed=parse_bool(value);if(command=="require-full-coverage")policy.require_full_coverage=parsed;else if(command=="allow-root")policy.allow_root=parsed;else policy.allow_capabilities=parsed;}
+            else if(command=="max-risk-score"){int value=-1;if(!(line>>value)||value<0||value>100)throw std::invalid_argument("max-risk-score must be between 0 and 100");require_end(line);if(!singleton.insert(command).second)throw std::invalid_argument("duplicate max-risk-score");policy.max_risk_score=value;}
+            else if(command=="default"){std::string category,value;if(!(line>>category>>value))throw std::invalid_argument("default requires category and action");require_end(line);std::string key=command+":"+category;if(!singleton.insert(key).second)throw std::invalid_argument("duplicate default for "+category);auto action=parse_action(value);if(category=="credential")policy.default_credential=action;else if(category=="sensitive-file")policy.default_sensitive_file=action;else if(category=="network")policy.default_network=action;else throw std::invalid_argument("unsupported default category");}
+            else if(command=="credential"||command=="resource-prefix"){std::string pattern,value;if(!(line>>std::quoted(pattern)>>value))throw std::invalid_argument("rule requires pattern and action");require_end(line);if(command=="credential"&&!valid_credential_name(pattern))throw std::invalid_argument("invalid credential name");if(command=="resource-prefix"&&(pattern.empty()||pattern[0]!='/'))throw std::invalid_argument("resource prefix must be absolute");std::string category=command=="credential"?"credential":"filesystem";for(const auto& rule:policy.rules)if(rule.category==category&&rule.pattern==pattern)throw std::invalid_argument("duplicate policy rule");policy.rules.push_back({category,std::move(pattern),parse_action(value)});}
+            else throw std::invalid_argument("unknown policy directive: "+command);
+        }catch(const std::invalid_argument& error){throw std::invalid_argument("policy line "+std::to_string(number)+": "+error.what());}
+    }
+    if(!version_seen)throw std::invalid_argument("policy version is required");
+    return policy;
+}
+
+PolicyEvaluation evaluate_policy(const Assessment& assessment,const Policy& policy,const std::set<std::string>& approvals){
+    PolicyEvaluation evaluation;const auto& snapshot=assessment.snapshot;
+    constexpr uint32_t full=AS_COVERAGE_STATUS|AS_COVERAGE_ENVIRONMENT|AS_COVERAGE_RESOURCES;
+    if(policy.require_full_coverage&&(snapshot.coverage&full)!=full)add_policy_decision(evaluation,PolicyAction::deny,"observability","full-coverage","Required monitoring coverage is unavailable",policy,approvals);
+    if((snapshot.coverage&AS_COVERAGE_STATUS)&&!policy.allow_root&&snapshot.effective_uid==0)add_policy_decision(evaluation,PolicyAction::deny,"privilege","root","Root execution is forbidden",policy,approvals);
+    if((snapshot.coverage&AS_COVERAGE_STATUS)&&!policy.allow_capabilities&&snapshot.effective_capabilities)add_policy_decision(evaluation,PolicyAction::deny,"privilege","capabilities","Linux capabilities are forbidden",policy,approvals);
+    if(assessment.risk_score>policy.max_risk_score)add_policy_decision(evaluation,PolicyAction::deny,"risk","score","Risk score exceeds policy maximum",policy,approvals);
+    if(snapshot.coverage&AS_COVERAGE_ENVIRONMENT)for(size_t i=0;i<snapshot.credential_count;++i){const auto& c=snapshot.credentials[i];auto action=rule_action(policy,"credential",c.name,policy.default_credential);add_policy_decision(evaluation,action,"credential",c.name,"Credential exposure requires a policy decision",policy,approvals);}
+    if(snapshot.coverage&AS_COVERAGE_RESOURCES)for(size_t i=0;i<snapshot.resource_count;++i){const auto& r=snapshot.resources[i];std::string category=r.kind==AS_RESOURCE_SOCKET?"network":"filesystem";auto fallback=r.kind==AS_RESOURCE_SOCKET?policy.default_network:policy.default_sensitive_file;auto action=rule_action(policy,category,r.path,fallback);add_policy_decision(evaluation,action,category,r.path,"Resource exposure requires a policy decision",policy,approvals);}
+    return evaluation;
+}
+
 std::string private_credential(const as_credential& credential, Privacy privacy) {
     return privacy == Privacy::strict ? "[credential name redacted]" : credential.name;
 }
@@ -99,7 +174,7 @@ std::string private_resource(const as_resource& resource, Privacy privacy) {
     return privacy == Privacy::strict ? "[resource identifier redacted]" : resource.path;
 }
 
-std::string to_json(const Assessment& a, long long timestamp_ms, Privacy privacy, const std::vector<ExposureChange>& changes) {
+std::string to_json(const Assessment& a, long long timestamp_ms, Privacy privacy, const std::vector<ExposureChange>& changes,const PolicyEvaluation* policy) {
     std::ostringstream o;
     std::string executable=privacy==Privacy::strict?"[executable path redacted]":a.snapshot.executable;
     std::string working_directory=privacy==Privacy::strict?"[working directory redacted]":a.snapshot.working_directory;
@@ -112,10 +187,13 @@ std::string to_json(const Assessment& a, long long timestamp_ms, Privacy privacy
     for(size_t i=0;i<a.findings.size();++i){if(i)o<<',';const auto& f=a.findings[i];std::string evidence=privacy==Privacy::strict&&f.category=="credential"?"[credential name redacted]":privacy==Privacy::strict&&(f.category=="filesystem"||f.category=="network")?"[resource identifier redacted]":f.evidence;o<<"{\"ruleId\":\""<<f.rule_id<<"\",\"category\":\""<<f.category<<"\",\"severity\":\""<<severity_name(f.severity)<<"\",\"score\":"<<f.score<<",\"title\":\""<<escape(f.title)<<"\",\"evidence\":\""<<escape(evidence)<<"\",\"recommendation\":\""<<escape(f.recommendation)<<"\"}";}
     o << "],\"changes\":[";
     for(size_t i=0;i<changes.size();++i){if(i)o<<',';const auto& c=changes[i];o<<"{\"direction\":\""<<direction_name(c.direction)<<"\",\"category\":\""<<escape(c.category)<<"\",\"severity\":\""<<severity_name(c.severity)<<"\",\"attention\":"<<(c.attention?"true":"false")<<",\"identifier\":\""<<escape(private_change_identifier(c,privacy))<<"\"}";}
-    o << "]}\n"; return o.str();
+    o << "],\"policy\":{";
+    o << "\"evaluated\":"<<(policy?"true":"false")<<",\"blocked\":"<<(policy&&policy->blocked?"true":"false")<<",\"decisions\":[";
+    if(policy)for(size_t i=0;i<policy->decisions.size();++i){if(i)o<<',';const auto& d=policy->decisions[i];o<<"{\"action\":\""<<action_name(d.action)<<"\",\"category\":\""<<escape(d.category)<<"\",\"identifier\":\""<<escape(private_policy_identifier(d,privacy))<<"\",\"reason\":\""<<escape(d.reason)<<"\",\"approved\":"<<(d.approved?"true":"false")<<",\"blocking\":"<<(d.blocking?"true":"false")<<"}";}
+    o << "]}}\n"; return o.str();
 }
 
-std::string to_tsv(const Assessment& a,long long timestamp_ms,Privacy privacy,const std::vector<ExposureChange>& changes) {
+std::string to_tsv(const Assessment& a,long long timestamp_ms,Privacy privacy,const std::vector<ExposureChange>& changes,const PolicyEvaluation* policy) {
     std::string executable=privacy==Privacy::strict?"[executable path redacted]":a.snapshot.executable;
     std::string process_name=privacy==Privacy::strict?"[process name redacted]":a.snapshot.process_name;
     std::ostringstream o;o<<"SNAPSHOT\t"<<timestamp_ms<<'\t'<<a.snapshot.pid<<'\t'<<a.risk_score<<'\t'<<severity_name(a.level)<<'\t'<<tsv_field(process_name)<<'\t'<<a.snapshot.effective_uid<<'\t'<<std::hex<<a.snapshot.effective_capabilities<<std::dec<<'\t'<<tsv_field(executable)<<'\n';
@@ -123,6 +201,7 @@ std::string to_tsv(const Assessment& a,long long timestamp_ms,Privacy privacy,co
     for(size_t i=0;i<a.snapshot.resource_count;++i){const auto& r=a.snapshot.resources[i];o<<"RESOURCE\t"<<severity_name(severity_from(r.risk))<<'\t'<<as_resource_kind_name(r.kind)<<'\t'<<tsv_field(private_resource(r,privacy))<<'\n';}
     for(const auto& f:a.findings){std::string evidence=privacy==Privacy::strict&&f.category=="credential"?"[credential name redacted]":privacy==Privacy::strict&&(f.category=="filesystem"||f.category=="network")?"[resource identifier redacted]":f.evidence;o<<"FINDING\t"<<severity_name(f.severity)<<'\t'<<tsv_field(f.rule_id)<<'\t'<<tsv_field(f.title)<<'\t'<<tsv_field(evidence)<<'\t'<<tsv_field(f.recommendation)<<'\n';}
     for(const auto& c:changes)o<<"CHANGE\t"<<timestamp_ms<<'\t'<<direction_name(c.direction)<<'\t'<<severity_name(c.severity)<<'\t'<<tsv_field(c.category)<<'\t'<<tsv_field(private_change_identifier(c,privacy))<<'\t'<<(c.attention?"ATTENTION":"NORMAL")<<'\n';
+    if(policy)for(const auto& d:policy->decisions)o<<"POLICY\t"<<action_name(d.action)<<'\t'<<tsv_field(d.category)<<'\t'<<tsv_field(private_policy_identifier(d,privacy))<<'\t'<<tsv_field(d.reason)<<'\t'<<(d.approved?"APPROVED":d.blocking?"BLOCKING":"ATTENTION")<<'\n';
     o<<"END\n";return o.str();
 }
 }

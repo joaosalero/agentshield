@@ -28,6 +28,9 @@ they can contain process metadata and local paths.
 | PID reuse | Process start time checked before and after snapshot | Snapshot fields are not an atomic kernel transaction |
 | Access granted after initial inspection | Consecutive snapshots emit attention-marked drift events | A grant and revocation between samples may be missed |
 | Drift event privacy leak | Category-aware strict redaction also covers changes | PID and severity remain available for correlation |
+| Policy tampering or substitution | `O_NOFOLLOW`, type/owner/mode/size validation and strict versioned parsing | A trusted owner or root can intentionally replace policy content |
+| Unreviewed sensitive access | Explicit decisions plus a pre-instruction gate for the initial executable | Later exec/access between samples and process-group escape require cgroup/LSM containment |
+| Approval replay | Approvals are launch-scoped and never persisted | Wildcard approvals intentionally broaden one supervised session |
 
 ## Non-goals for v0.1
 

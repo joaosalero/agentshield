@@ -33,7 +33,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - run: make java
+      - run: make java-test
   codeql:
     name: CodeQL security analysis
     runs-on: ubuntu-24.04

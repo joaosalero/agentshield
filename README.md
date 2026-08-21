@@ -23,6 +23,8 @@ findings in a live desktop dashboard or machine-readable event stream.
 - Access-drift detection for newly granted or revoked credentials, sensitive files,
   sockets, privileges, and monitoring coverage
 - A bounded live access timeline that calls attention to dangerous new grants
+- Versioned allow/deny/approval policies with fail-closed supervised enforcement
+- Launch-scoped approvals that are never persisted
 - Point-in-time inspection, continuous monitoring, or supervised command launch
 - JSON Lines contract designed for SIEM ingestion and future Helix Sentinel use
 - Java Swing dashboard with live credential and finding tables
@@ -53,6 +55,8 @@ make
 ./build/agentshield run -- python3 your_agent.py
 ./build/agentshield run --privacy strict --max-memory-mb 2048 \
   --max-cpu-seconds 600 -- python3 your_agent.py
+./build/agentshield run --policy policies/baseline.policy \
+  --approve credential:MY_SCOPED_TOKEN -- python3 your_agent.py
 ./build/agentshield watch 12345 --privacy strict --audit audit.jsonl
 ```
 
@@ -81,6 +85,8 @@ Each JSON line follows the backward-compatible `io.agentshield.snapshot/v1` cont
 - normalized findings and a bounded 0–100 risk score.
 - a `changes` array describing grants and revocations since the preceding
   successful snapshot; the first snapshot establishes the in-memory baseline.
+- an optional `policy` object containing normalized decisions, approval state,
+  and whether supervised execution was blocked.
 
 Change events contain direction, category, severity, a privacy-filtered
 identifier, and an `attention` flag. A lost observability surface is treated as
@@ -98,14 +104,13 @@ mount options. Socket identifiers show that network access exists but do not yet
 resolve every inode to a remote endpoint. Environment variables can change
 between snapshots, and a compromised kernel is outside the trust boundary.
 
-See [the security architecture](docs/SECURITY_ARCHITECTURE.md),
+See [the policy guide](docs/POLICY.md), [the security architecture](docs/SECURITY_ARCHITECTURE.md),
 [privacy guide](docs/PRIVACY.md), [threat model](docs/THREAT_MODEL.md), and
 [security policy](SECURITY.md).
 
 ## Roadmap
 
 - eBPF event sensor for file, process, and network activity
-- enforceable allow/deny/approval policy mode
 - Windows ETW and macOS Endpoint Security adapters
 - signed policy bundles and tamper-evident audit chains
 - native Helix Sentinel ingestion adapter

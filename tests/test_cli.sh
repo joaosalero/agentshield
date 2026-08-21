@@ -102,3 +102,60 @@ fifo_code=$?
 set -e
 if test "$fifo_code" -eq 0 || test "$fifo_code" -eq 124; then echo "audit FIFO was accepted or blocked" >&2; exit 1; fi
 echo "secure audit file controls: OK"
+
+policy_dir=$(mktemp -d)
+policy_file="$policy_dir/enforce.policy"
+cat >"$policy_file" <<'POLICY'
+version 1
+mode enforce
+require-full-coverage true
+allow-root false
+allow-capabilities false
+max-risk-score 100
+default credential allow
+default sensitive-file allow
+default network allow
+credential SYNTHETIC_POLICY_TOKEN approval
+POLICY
+chmod 600 "$policy_file"
+set +e
+blocked_marker="$policy_dir/must-not-run"
+policy_output=$(env SYNTHETIC_POLICY_TOKEN=canary "$binary" run --interval 10 --policy "$policy_file" -- sh -c 'touch "$1"' sh "$blocked_marker")
+policy_code=$?
+set -e
+test "$policy_code" -eq 3
+test ! -e "$blocked_marker"
+python3 -c 'import json,sys; rows=[json.loads(x) for x in sys.stdin if x.strip()]; assert rows; blocked=[r for r in rows if r["policy"]["blocked"]]; assert blocked and any(d["action"]=="APPROVAL" and d["blocking"] for r in blocked for d in r["policy"]["decisions"]); print("policy enforcement: OK")' <<<"$policy_output"
+if grep -q canary <<<"$policy_output"; then echo "policy telemetry leaked a value" >&2; exit 1; fi
+
+env SYNTHETIC_POLICY_TOKEN=canary "$binary" run --interval 10 --policy "$policy_file" --approve credential:SYNTHETIC_POLICY_TOKEN -- sh -c 'sleep 0.08' >/dev/null
+audit_policy="$policy_dir/audit.policy"
+sed 's/mode enforce/mode audit/' "$policy_file" >"$audit_policy"
+chmod 600 "$audit_policy"
+audit_ready="$policy_dir/audit-ready"
+env SYNTHETIC_POLICY_TOKEN=canary sh -c 'touch "$1"; sleep 2' sh "$audit_ready" &
+audit_target=$!
+for _ in $(seq 1 100); do test -e "$audit_ready" && break; sleep 0.01; done
+test -e "$audit_ready"
+policy_tsv="$($binary inspect "$audit_target" --policy "$audit_policy" --privacy strict --format tsv)"
+kill "$audit_target" 2>/dev/null || true
+wait "$audit_target" 2>/dev/null || true
+grep -q $'POLICY\tAPPROVAL\tcredential\t\[credential name redacted\].*ATTENTION' <<<"$policy_tsv"
+if grep -Eq 'SYNTHETIC_POLICY_TOKEN|canary' <<<"$policy_tsv"; then echo "strict policy TSV leaked an identifier or value" >&2; exit 1; fi
+echo "desktop policy TSV contract: OK"
+chmod 666 "$policy_file"
+if "$binary" run --policy "$policy_file" -- true >/dev/null 2>&1; then echo "writable policy file accepted" >&2; exit 1; fi
+chmod 600 "$policy_file"
+ln -s "$policy_file" "$policy_dir/policy-link"
+if "$binary" run --policy "$policy_dir/policy-link" -- true >/dev/null 2>&1; then echo "policy symlink accepted" >&2; exit 1; fi
+head -c 65537 /dev/zero >"$policy_dir/oversized.policy"
+chmod 600 "$policy_dir/oversized.policy"
+if "$binary" run --policy "$policy_dir/oversized.policy" -- true >/dev/null 2>&1; then echo "oversized policy accepted" >&2; exit 1; fi
+mkfifo "$policy_dir/policy-fifo"
+set +e
+timeout 2 "$binary" run --policy "$policy_dir/policy-fifo" -- true >/dev/null 2>&1
+fifo_policy_code=$?
+set -e
+if test "$fifo_policy_code" -eq 0 || test "$fifo_policy_code" -eq 124; then echo "policy FIFO was accepted or blocked" >&2; exit 1; fi
+rm -rf "$policy_dir"
+echo "secure policy and explicit approval controls: OK"
