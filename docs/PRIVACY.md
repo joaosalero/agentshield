@@ -27,6 +27,11 @@ identifiers are personal data must apply access control and retention policy.
 No telemetry is transmitted by AgentShield. Output exists only on stdout, in
 the local dashboard, or in an explicitly requested audit file.
 
+Access-change events use the same redaction boundary as snapshots. Strict mode
+never reveals the credential name or resource identifier that changed. The
+comparison baseline remains in process memory for the life of the monitor and
+is discarded when monitoring stops.
+
 ## Audit retention
 
 Audit files are created with mode `0600`. Existing files are accepted only when

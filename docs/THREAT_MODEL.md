@@ -26,6 +26,8 @@ they can contain process metadata and local paths.
 | Privilege escalation | `no_new_privs` default and capabilities finding | Existing privileges are observed, not revoked |
 | Audit path attack | `O_NOFOLLOW`, ownership/type/mode validation, `0600` | Root and a compromised kernel remain trusted |
 | PID reuse | Process start time checked before and after snapshot | Snapshot fields are not an atomic kernel transaction |
+| Access granted after initial inspection | Consecutive snapshots emit attention-marked drift events | A grant and revocation between samples may be missed |
+| Drift event privacy leak | Category-aware strict redaction also covers changes | PID and severity remain available for correlation |
 
 ## Non-goals for v0.1
 

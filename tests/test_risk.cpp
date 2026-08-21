@@ -35,6 +35,54 @@ int main() {
     assert(tsv.find("CREDENTIAL\tHIGH\tSYNTHETIC_DEMO_TOKEN_NAME") != std::string::npos);
     assert(tsv.find("\tFINDING\tforged") == std::string::npos);
 
+    as_snapshot baseline = snapshot;
+    baseline.credential_count = 0;
+    baseline.resource_count = 0;
+    auto changes = agentshield::detect_changes(agentshield::assess(baseline), assessment);
+    assert(changes.size() == 2);
+    assert(changes[0].direction == agentshield::ChangeDirection::granted);
+    assert(changes[0].attention);
+    auto change_json = agentshield::to_json(assessment, 2, agentshield::Privacy::strict, changes);
+    assert(change_json.find("\"changes\":[{") != std::string::npos);
+    assert(change_json.find("SYNTHETIC_DEMO_TOKEN_NAME") == std::string::npos);
+    assert(change_json.find("/tmp/file") == std::string::npos);
+    auto change_tsv = agentshield::to_tsv(assessment, 2, agentshield::Privacy::standard, changes);
+    assert(change_tsv.find("CHANGE\t2\tGRANTED\tHIGH\tcredential\tSYNTHETIC_DEMO_TOKEN_NAME\tATTENTION") != std::string::npos);
+    assert(change_tsv.find("\tFINDING\tforged") == std::string::npos);
+    auto strict_change_tsv = agentshield::to_tsv(assessment, 2, agentshield::Privacy::strict, changes);
+    assert(strict_change_tsv.find("SYNTHETIC_DEMO_TOKEN_NAME") == std::string::npos);
+    assert(strict_change_tsv.find("/tmp/file") == std::string::npos);
+    auto revoked = agentshield::detect_changes(assessment, agentshield::assess(baseline));
+    assert(revoked.size() == 2);
+    bool credential_revoked = false, filesystem_revoked = false;
+    for (const auto& change : revoked) {
+        assert(!change.attention && change.direction == agentshield::ChangeDirection::revoked);
+        credential_revoked |= change.category == "credential" && change.identifier == "SYNTHETIC_DEMO_TOKEN_NAME";
+        filesystem_revoked |= change.category == "filesystem" && change.identifier.find("/tmp/file") == 0;
+    }
+    assert(credential_revoked && filesystem_revoked);
+
+    as_snapshot obscured = snapshot;
+    obscured.coverage = AS_COVERAGE_STATUS;
+    obscured.credential_count = 0;
+    obscured.resource_count = 0;
+    auto coverage_lost = agentshield::detect_changes(assessment, agentshield::assess(obscured));
+    assert(coverage_lost.size() == 1);
+    assert(coverage_lost[0].category == "observability" && coverage_lost[0].attention);
+    auto coverage_restored = agentshield::detect_changes(agentshield::assess(obscured), assessment);
+    assert(coverage_restored.size() == 1);
+    assert(coverage_restored[0].category == "observability" && !coverage_restored[0].attention);
+
+    as_snapshot privileged = baseline;
+    privileged.effective_uid = 0;
+    privileged.effective_capabilities = 3;
+    auto privilege_changes = agentshield::detect_changes(agentshield::assess(baseline), agentshield::assess(privileged));
+    assert(privilege_changes.size() == 3);
+    assert(privilege_changes[0].attention);
+    auto privilege_removed = agentshield::detect_changes(agentshield::assess(privileged), agentshield::assess(baseline));
+    assert(privilege_removed.size() == 3);
+    assert(!privilege_removed[0].attention);
+
     as_snapshot incomplete{};
     incomplete.pid = 43;
     auto unknown = agentshield::assess(incomplete);

@@ -57,10 +57,11 @@ int open_audit(const std::string& path){
     if(flags<0||fcntl(fd,F_SETFL,flags&~O_NONBLOCK)!=0){close(fd);throw std::runtime_error("cannot configure audit file safely");}
     return fd;
 }
-int emit(int pid,const std::string& format,agentshield::Privacy privacy){
+int emit(int pid,const std::string& format,agentshield::Privacy privacy,agentshield::Assessment* previous=nullptr){
     as_snapshot snapshot{};char error[256];if(as_collect_snapshot(pid,&snapshot,error,sizeof error)!=0){std::cerr<<"agentshield: "<<error<<'\n';return 1;}
-    auto assessment=agentshield::assess(snapshot);long long timestamp=now_ms();std::string json=agentshield::to_json(assessment,timestamp,privacy);std::cout<<(format=="tsv"?agentshield::to_tsv(assessment,timestamp,privacy):json)<<std::flush;
+    auto assessment=agentshield::assess(snapshot);auto changes=previous&&previous->snapshot.pid?agentshield::detect_changes(*previous,assessment):std::vector<agentshield::ExposureChange>{};long long timestamp=now_ms();std::string json=agentshield::to_json(assessment,timestamp,privacy,changes);std::cout<<(format=="tsv"?agentshield::to_tsv(assessment,timestamp,privacy,changes):json)<<std::flush;
     if(audit_fd>=0){try{write_all(audit_fd,json);}catch(const std::exception& error){std::cerr<<"agentshield: "<<error.what()<<'\n';return 1;}}
+    if(previous)*previous=std::move(assessment);
     return 0;
 }
 void set_limit(int resource,rlim_t value,const char* description){struct rlimit limit{value,value};if(setrlimit(resource,&limit)!=0){std::cerr<<"agentshield: cannot apply "<<description<<"\n";_exit(126);}}
@@ -134,8 +135,8 @@ int main(int argc,char** argv){
             if(status_count==sizeof exec_error){waitpid(child,nullptr,0);throw std::runtime_error("cannot execute supervised command: "+std::string(std::strerror(exec_error)));}
             pid=child;
         }
-        int result=0;bool child_reaped=false;
-        while(running){if(child>0){int status=0;pid_t state=waitpid(child,&status,WNOHANG);if(state==child){result=exit_result(status);child_reaped=true;terminate_group(child);break;}}if(emit(pid,format,privacy)!=0){if(child>0){terminate_group(child);int status=0;if(waitpid(child,&status,0)==child)child_reaped=true;}result=1;break;}std::this_thread::sleep_for(std::chrono::milliseconds(interval));}
+        int result=0;bool child_reaped=false;agentshield::Assessment previous;
+        while(running){if(child>0){int status=0;pid_t state=waitpid(child,&status,WNOHANG);if(state==child){result=exit_result(status);child_reaped=true;terminate_group(child);break;}}if(emit(pid,format,privacy,&previous)!=0){if(child>0){terminate_group(child);int status=0;if(waitpid(child,&status,0)==child)child_reaped=true;}result=1;break;}std::this_thread::sleep_for(std::chrono::milliseconds(interval));}
         if(child>0&&!child_reaped){terminate_group(child);int status=0;if(waitpid(child,&status,0)==child)result=exit_result(status);else result=1;}
         if(audit_fd>=0){if(fsync(audit_fd)!=0)throw std::runtime_error("audit synchronization failed");close(audit_fd);audit_fd=-1;}return result;
     }catch(const std::exception& error){if(audit_fd>=0)close(audit_fd);std::cerr<<"agentshield: "<<error.what()<<'\n';return 2;}
