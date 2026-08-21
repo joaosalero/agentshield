@@ -11,6 +11,9 @@ extern "C" {
 #define AS_MAX_NAME 256
 #define AS_MAX_PATH 1024
 #define AS_MAX_ITEMS 128
+#define AS_COVERAGE_STATUS 1U
+#define AS_COVERAGE_ENVIRONMENT 2U
+#define AS_COVERAGE_RESOURCES 4U
 
 typedef enum {
     AS_RESOURCE_FILE = 1,
@@ -44,6 +47,7 @@ typedef struct {
     as_resource resources[AS_MAX_ITEMS];
     size_t resource_count;
     size_t truncated_items;
+    uint32_t coverage;
 } as_snapshot;
 
 /* Credential values are discarded during parsing and never retained in the snapshot. */

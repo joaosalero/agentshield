@@ -23,6 +23,10 @@ findings in a live desktop dashboard or machine-readable event stream.
 - Point-in-time inspection, continuous monitoring, or supervised command launch
 - JSON Lines contract designed for SIEM ingestion and future Helix Sentinel use
 - Java Swing dashboard with live credential and finding tables
+- Strict privacy mode for shared telemetry and demonstrations
+- Owner-only local JSONL audit files with final-component symlink rejection
+- Secure supervised execution with `no_new_privs`, no core dumps, descriptor
+  isolation, process groups, and optional CPU/memory/process limits
 - Read-only `/proc` sensor written in C and policy engine written in C++17
 - Unit, integration, redaction, sanitizer, CMake, and CI validation
 
@@ -44,6 +48,9 @@ make
 ./build/agentshield inspect $$
 ./build/agentshield watch 12345 --interval 1000
 ./build/agentshield run -- python3 your_agent.py
+./build/agentshield run --privacy strict --max-memory-mb 2048 \
+  --max-cpu-seconds 600 -- python3 your_agent.py
+./build/agentshield watch 12345 --privacy strict --audit audit.jsonl
 ```
 
 Desktop dashboard (JDK 17+):
@@ -81,7 +88,9 @@ mount options. Socket identifiers show that network access exists but do not yet
 resolve every inode to a remote endpoint. Environment variables can change
 between snapshots, and a compromised kernel is outside the trust boundary.
 
-See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) and [SECURITY.md](SECURITY.md).
+See [the security architecture](docs/SECURITY_ARCHITECTURE.md),
+[privacy guide](docs/PRIVACY.md), [threat model](docs/THREAT_MODEL.md), and
+[security policy](SECURITY.md).
 
 ## Roadmap
 
