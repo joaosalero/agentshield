@@ -24,6 +24,10 @@ def main():
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     if digest.lower() != fields[0].lower():
         fail("SHA-256 mismatch")
+    name_match = re.fullmatch(r"agentshield-([0-9]+\.[0-9]+\.[0-9]+)-linux\.tar\.gz", archive.name)
+    if not name_match:
+        fail("archive name must contain a canonical semantic version")
+    package_version = name_match.group(1)
     expected_root = archive.name.removesuffix(".tar.gz")
     required = {
         f"{expected_root}/bin/agentshield": 0o755,
@@ -31,8 +35,10 @@ def main():
         f"{expected_root}/lib/agentshield/agentshield-desktop.jar": 0o644,
         f"{expected_root}/agentshield-source.cdx.json": 0o644,
         f"{expected_root}/agentshield-provenance.json": 0o644,
+        f"{expected_root}/share/doc/agentshield/VERSION": 0o644,
     }
     seen = set()
+    packaged_version = None
     with tarfile.open(archive, "r:gz") as package:
         for member in package.getmembers():
             path = PurePosixPath(member.name)
@@ -53,9 +59,22 @@ def main():
                 fail(f"required member has unsafe mode: {member.name}")
             if member.isfile() and member.name not in required and member.mode != 0o644:
                 fail(f"data file must have mode 0644: {member.name}")
+            if member.name == f"{expected_root}/share/doc/agentshield/VERSION" and member.isfile():
+                stream = package.extractfile(member)
+                if stream is None:
+                    fail("cannot read packaged VERSION")
+                data = stream.read(128)
+                if stream.read(1):
+                    fail("packaged VERSION is oversized")
+                try:
+                    packaged_version = data.decode("ascii")
+                except UnicodeDecodeError:
+                    fail("packaged VERSION is not ASCII")
     missing = set(required) - seen
     if missing:
         fail("missing required members: " + ", ".join(sorted(missing)))
+    if packaged_version not in (package_version, package_version + "\n"):
+        fail("packaged VERSION does not match archive name")
 
 
 if __name__ == "__main__":

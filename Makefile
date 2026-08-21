@@ -3,13 +3,20 @@ CXX ?= c++
 CFLAGS ?= -O2 -std=c11 -Wall -Wextra -Wpedantic -Werror
 CXXFLAGS ?= -O2 -std=c++17 -Wall -Wextra -Wpedantic -Werror
 CPPFLAGS := -Icore/include -Iengine/include
+VERSION := $(strip $(shell python3 scripts/read_version.py VERSION))
+ifeq ($(VERSION),)
+$(error VERSION must contain one semantic x.y.z version)
+endif
+CPPFLAGS += -DAGENTSHIELD_VERSION=\"$(VERSION)\"
 LDFLAGS ?=
 LDLIBS := -lcrypto
 BUILD := build
 PREFIX ?= /usr/local
 OBJECTS := $(BUILD)/sensor.o $(BUILD)/risk_engine.o $(BUILD)/audit_log.o $(BUILD)/main.o
-.PHONY: all test soak cgroup-test-required sanitize java java-test jar sbom provenance dist verify-dist deterministic-package install uninstall run-gui clean
-all: $(BUILD)/agentshield
+.PHONY: all check-version test soak cgroup-test-required sanitize java java-test jar sbom provenance dist verify-dist deterministic-package install uninstall run-gui clean
+all: check-version $(BUILD)/agentshield
+check-version:
+	printf '%s\n' '$(VERSION)' | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$'
 $(BUILD):
 	mkdir -p $@
 $(BUILD)/sensor.o: core/src/sensor_linux.c core/include/agentshield/sensor.h | $(BUILD)
@@ -18,7 +25,7 @@ $(BUILD)/risk_engine.o: engine/src/risk_engine.cpp engine/include/risk_engine.hp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 $(BUILD)/audit_log.o: engine/src/audit_log.cpp engine/include/audit_log.hpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
-$(BUILD)/main.o: cli/src/main.cpp engine/include/risk_engine.hpp engine/include/audit_log.hpp core/include/agentshield/sensor.h | $(BUILD)
+$(BUILD)/main.o: cli/src/main.cpp engine/include/risk_engine.hpp engine/include/audit_log.hpp core/include/agentshield/sensor.h VERSION scripts/read_version.py | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 $(BUILD)/agentshield: $(OBJECTS)
 	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o $@
@@ -26,6 +33,8 @@ $(BUILD)/test_risk: tests/test_risk.cpp $(BUILD)/sensor.o $(BUILD)/risk_engine.o
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 test: all $(BUILD)/test_risk
 	./$(BUILD)/test_risk
+	python3 tests/test_version_contract.py
+	bash tests/test_make_version_rebuild.sh
 	bash tests/test_cli.sh ./$(BUILD)/agentshield
 	bash tests/test_cgroup.sh ./$(BUILD)/agentshield
 soak: all
@@ -50,12 +59,13 @@ provenance: all jar sbom
 dist: all jar sbom provenance
 	bash scripts/package-linux.sh
 verify-dist: dist
-	bash scripts/verify-package.sh $(BUILD)/dist/agentshield-0.1.0-linux.tar.gz
+	bash scripts/verify-package.sh $(BUILD)/dist/agentshield-$(VERSION)-linux.tar.gz
 	python3 tests/test_package_verifier.py
+	python3 tests/test_release_metadata.py $(BUILD)/agentshield $(BUILD)/agentshield-desktop.jar $(BUILD)/agentshield-source.cdx.json $(BUILD)/agentshield-provenance.json $(BUILD)/dist/agentshield-$(VERSION)-linux.tar.gz
 deterministic-package: verify-dist
-	cp $(BUILD)/dist/agentshield-0.1.0-linux.tar.gz $(BUILD)/dist/first.tar.gz
+	cp $(BUILD)/dist/agentshield-$(VERSION)-linux.tar.gz $(BUILD)/dist/first.tar.gz
 	bash scripts/package-linux.sh
-	cmp $(BUILD)/dist/first.tar.gz $(BUILD)/dist/agentshield-0.1.0-linux.tar.gz
+	cmp $(BUILD)/dist/first.tar.gz $(BUILD)/dist/agentshield-$(VERSION)-linux.tar.gz
 install: all jar
 	install -d $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/lib/agentshield $(DESTDIR)$(PREFIX)/share/agentshield/policies $(DESTDIR)$(PREFIX)/share/doc/agentshield
 	install -m 0755 $(BUILD)/agentshield $(DESTDIR)$(PREFIX)/bin/agentshield

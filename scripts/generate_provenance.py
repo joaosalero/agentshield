@@ -6,12 +6,20 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from read_version import read_version
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def project_version():
+    try:
+        return read_version(ROOT / "VERSION")
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
 
 
 def main():
@@ -35,6 +43,7 @@ def main():
         "predicateType": "https://agentshield.dev/attestation/build-metadata/v1",
         "predicate": {
             "buildType": "agentshield/make/v1",
+            "version": project_version(),
             "source": {"revision": revision, "dirty": dirty},
             "environment": {"os": os.uname().sysname, "architecture": os.uname().machine},
         },

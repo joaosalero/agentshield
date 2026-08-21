@@ -27,6 +27,10 @@
 #include <sys/syscall.h>
 #include <sys/wait.h>
 
+#ifndef AGENTSHIELD_VERSION
+#define AGENTSHIELD_VERSION "0.0.0-dev"
+#endif
+
 namespace {
 volatile std::sig_atomic_t running=1;
 int audit_fd=-1;
@@ -46,7 +50,8 @@ void usage(){
       "  agentshield run [OPTIONS] -- COMMAND [ARGS...]\n"
       "  agentshield audit init-key FILE\n"
       "  agentshield audit verify FILE --audit-key FILE\n"
-      "  agentshield audit export FILE --audit-key FILE\n\nOptions:\n"
+      "  agentshield audit export FILE --audit-key FILE\n"
+      "  agentshield --version\n\nOptions:\n"
       "  --format json|tsv          Output format (default: json)\n"
       "  --privacy standard|strict Strict redacts credential names and paths\n"
       "  --interval MS              Watch interval (default: 1000)\n"
@@ -194,6 +199,7 @@ int main(int argc,char** argv){
     try{
         harden_monitor();
         if(argc<2||std::string(argv[1])=="--help"){usage();return argc<2?2:0;}
+        if(std::string(argv[1])=="--version"){if(argc!=2)throw std::invalid_argument("--version accepts no arguments");std::cout<<"AgentShield "<<AGENTSHIELD_VERSION<<'\n';return 0;}
         std::string action=argv[1],format="json",privacy_text="standard",audit_path,audit_key_path,policy_path;std::set<std::string> approvals;int interval=1000,pid=0,command_index=-1;std::uint64_t configured_audit_max=64U*1024U*1024U;bool audit_max_configured=false;RunLimits limits;
         if(action=="audit"){
             if(argc<4)throw std::invalid_argument("audit requires init-key, verify, or export and a file");

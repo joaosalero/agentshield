@@ -13,8 +13,8 @@ findings in a live desktop dashboard or machine-readable event stream.
 > Linux/WSL preview. AgentShield is an observability control, not a complete
 > sandbox. It does not claim to block every operating-system action.
 
-Build requirements are a C11 compiler, a C++17 compiler, OpenSSL 3 development
-headers, and JDK 17 for the optional desktop dashboard.
+Build requirements are a C11 compiler, a C++17 compiler, Python 3, OpenSSL 3
+development headers, and JDK 17 for the optional desktop dashboard.
 
 ## Capabilities
 
@@ -58,6 +58,7 @@ event contract can be consumed by another UI or a security platform.
 ```bash
 make
 ./build/agentshield inspect $$
+./build/agentshield --version
 ./build/agentshield watch 12345 --interval 1000
 ./build/agentshield run -- python3 your_agent.py
 ./build/agentshield run --privacy strict --max-memory-mb 2048 \

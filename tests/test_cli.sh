@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 binary=${1:?binary required}
+version=$(python3 scripts/read_version.py VERSION)
+test "$("$binary" --version)" = "AgentShield $version"
+echo "version contract: OK"
 output=$(env SYNTHETIC_DEMO_API_KEY_NAME=not-a-real-secret "$binary" inspect $$)
 python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["schema"]=="io.agentshield.snapshot/v1"; assert d["process"]["pid"]>0; assert "risk" in d; print("sensor integration: OK")' <<<"$output"
 if grep -q 'not-a-real-secret' <<<"$output"; then echo "credential value leaked" >&2; exit 1; fi

@@ -1,5 +1,15 @@
 cmake_minimum_required(VERSION 3.20)
-project(AgentShield VERSION 0.1.0 LANGUAGES C CXX)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             "${CMAKE_CURRENT_SOURCE_DIR}/VERSION"
+             "${CMAKE_CURRENT_SOURCE_DIR}/scripts/read_version.py")
+execute_process(COMMAND python3 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/read_version.py"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/VERSION"
+                OUTPUT_VARIABLE AGENTSHIELD_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE
+                RESULT_VARIABLE VERSION_RESULT ERROR_VARIABLE VERSION_ERROR)
+if(NOT VERSION_RESULT EQUAL 0)
+  message(FATAL_ERROR "Invalid VERSION: ${VERSION_ERROR}")
+endif()
+project(AgentShield VERSION ${AGENTSHIELD_VERSION} LANGUAGES C CXX)
 include(GNUInstallDirs)
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
   message(FATAL_ERROR "AgentShield 0.1 native sensor supports Linux only; see docs/PLATFORM_SUPPORT.md")
@@ -16,6 +26,7 @@ target_include_directories(agentshield_engine PUBLIC engine/include)
 target_link_libraries(agentshield_engine PUBLIC agentshield_sensor OpenSSL::Crypto)
 add_executable(agentshield cli/src/main.cpp)
 target_link_libraries(agentshield PRIVATE agentshield_engine)
+target_compile_definitions(agentshield PRIVATE AGENTSHIELD_VERSION="${PROJECT_VERSION}")
 foreach(target agentshield_sensor agentshield_engine agentshield)
   target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endforeach()
@@ -33,7 +44,7 @@ install(FILES README.md SECURITY.md CONTRIBUTING.md docs/AUDIT.md docs/POLICY.md
         docs/PRIVACY.md docs/SECURITY_ARCHITECTURE.md docs/THREAT_MODEL.md
         docs/VALIDATION.md docs/DISTRIBUTION.md docs/PLATFORM_SUPPORT.md
         DESTINATION ${CMAKE_INSTALL_DOCDIR})
-install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
+install(FILES LICENSE VERSION DESTINATION ${CMAKE_INSTALL_DOCDIR})
 
 set(CPACK_PACKAGE_NAME "agentshield")
 set(CPACK_PACKAGE_VENDOR "AgentShield")

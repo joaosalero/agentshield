@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-version=0.1.0
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+version="$(python3 "$root/scripts/read_version.py" "$root/VERSION")"
 stage="$root/build/package/agentshield-$version-linux"
 archive="$root/build/dist/agentshield-$version-linux.tar.gz"
 case "$stage" in
@@ -17,6 +17,7 @@ install -m 0644 "$root/build/agentshield-source.cdx.json" "$stage/agentshield-so
 install -m 0644 "$root/build/agentshield-provenance.json" "$stage/agentshield-provenance.json"
 install -m 0644 "$root"/policies/*.policy "$stage/share/agentshield/policies/"
 install -m 0644 "$root/README.md" "$root/SECURITY.md" "$root/LICENSE" "$stage/share/doc/agentshield/"
+install -m 0644 "$root/VERSION" "$stage/share/doc/agentshield/VERSION"
 find "$stage" -type d -exec chmod 0755 {} +
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$root" show -s --format=%ct HEAD)}"
 export SOURCE_DATE_EPOCH

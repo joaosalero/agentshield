@@ -9,14 +9,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VERIFY = ROOT / "scripts" / "verify_archive.py"
-ARCHIVE_NAME = "agentshield-test-linux.tar.gz"
-PACKAGE_ROOT = "agentshield-test-linux"
+PACKAGE_VERSION = "9.8.7"
+PACKAGE_ROOT = f"agentshield-{PACKAGE_VERSION}-linux"
 REQUIRED = [
     "bin/agentshield",
     "bin/agentshield-desktop",
     "lib/agentshield/agentshield-desktop.jar",
     "agentshield-source.cdx.json",
     "agentshield-provenance.json",
+    "share/doc/agentshield/VERSION",
 ]
 
 
@@ -30,7 +31,8 @@ def add_file(package, name, mode=0o644, content=b"test"):
 def build(path, extra=None):
     with tarfile.open(path, "w:gz") as package:
         for name in REQUIRED:
-            add_file(package, name, 0o755 if name.startswith("bin/") else 0o644)
+            content = (PACKAGE_VERSION + "\n").encode("ascii") if name.endswith("/VERSION") else b"test"
+            add_file(package, name, 0o755 if name.startswith("bin/") else 0o644, content)
         if extra:
             extra(package)
 
@@ -52,7 +54,7 @@ def verify(path, manifest):
 
 def main():
     with tempfile.TemporaryDirectory() as temporary:
-        archive = Path(temporary) / ARCHIVE_NAME
+        archive = Path(temporary) / f"agentshield-{PACKAGE_VERSION}-linux.tar.gz"
         build(archive)
         manifest = checksum(archive)
         if verify(archive, manifest).returncode != 0:
@@ -90,7 +92,8 @@ def main():
 
         with tarfile.open(archive, "w:gz") as package:
             for name in REQUIRED[1:]:
-                add_file(package, name, 0o755 if name.startswith("bin/") else 0o644)
+                content = (PACKAGE_VERSION + "\n").encode("ascii") if name.endswith("/VERSION") else b"test"
+                add_file(package, name, 0o755 if name.startswith("bin/") else 0o644, content)
             entry = tarfile.TarInfo(f"{PACKAGE_ROOT}/{REQUIRED[0]}")
             entry.type = tarfile.DIRTYPE
             entry.mode = 0o755
@@ -107,6 +110,13 @@ def main():
         build(archive, writable_directory)
         if "directory must have mode 0755" not in verify(archive, checksum(archive)).stderr:
             raise AssertionError("world-writable directory was accepted")
+
+        with tarfile.open(archive, "w:gz") as package:
+            for name in REQUIRED:
+                content = b"1.2.3\n" if name.endswith("/VERSION") else b"test"
+                add_file(package, name, 0o755 if name.startswith("bin/") else 0o644, content)
+        if "does not match archive name" not in verify(archive, checksum(archive)).stderr:
+            raise AssertionError("mismatched packaged version was accepted")
     print("package verifier adversarial cases: OK")
 
 

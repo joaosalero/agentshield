@@ -4,9 +4,17 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from read_version import read_version
 
 ROOT = Path(__file__).resolve().parents[1]
-INPUTS = ["CMakeLists.txt", "Makefile", "cli", "core", "desktop", "engine", "policies", "scripts", "tests"]
+INPUTS = ["VERSION", "CMakeLists.txt", "Makefile", "cli", "core", "desktop", "engine", "policies", "scripts", "tests"]
+
+
+def project_version():
+    try:
+        return read_version(ROOT / "VERSION")
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
 
 
 def files():
@@ -36,7 +44,7 @@ def main():
         "specVersion": "1.5",
         "version": 1,
         "metadata": {
-            "component": {"type": "application", "name": "agentshield", "version": "0.1.0"},
+            "component": {"type": "application", "name": "agentshield", "version": project_version()},
             "tools": {"components": [{"type": "application", "name": "agentshield-sbom-generator", "version": "1"}]},
         },
         "components": components + [
