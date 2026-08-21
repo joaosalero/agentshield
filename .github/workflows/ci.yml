@@ -21,6 +21,7 @@ jobs:
       - run: cmake --build build-cmake --parallel
       - run: ctest --test-dir build-cmake --output-on-failure
       - run: make test
+      - run: AGENTSHIELD_SOAK_SECONDS=5 make soak
       - run: make sanitize
   desktop:
     runs-on: ubuntu-24.04
@@ -34,6 +35,10 @@ jobs:
           distribution: temurin
           java-version: '17'
       - run: make java-test
+      - run: make deterministic-package
+      - run: umask 077 && make verify-dist
+      - run: python3 -m json.tool build/agentshield-source.cdx.json > /dev/null
+      - run: python3 -m json.tool build/agentshield-provenance.json > /dev/null
   codeql:
     name: CodeQL security analysis
     runs-on: ubuntu-24.04

@@ -6,8 +6,9 @@ CPPFLAGS := -Icore/include -Iengine/include
 LDFLAGS ?=
 LDLIBS := -lcrypto
 BUILD := build
+PREFIX ?= /usr/local
 OBJECTS := $(BUILD)/sensor.o $(BUILD)/risk_engine.o $(BUILD)/audit_log.o $(BUILD)/main.o
-.PHONY: all test cgroup-test-required sanitize java java-test run-gui clean
+.PHONY: all test soak cgroup-test-required sanitize java java-test jar sbom provenance dist verify-dist deterministic-package install uninstall run-gui clean
 all: $(BUILD)/agentshield
 $(BUILD):
 	mkdir -p $@
@@ -27,6 +28,8 @@ test: all $(BUILD)/test_risk
 	./$(BUILD)/test_risk
 	bash tests/test_cli.sh ./$(BUILD)/agentshield
 	bash tests/test_cgroup.sh ./$(BUILD)/agentshield
+soak: all
+	AGENTSHIELD_SOAK_SECONDS=$${AGENTSHIELD_SOAK_SECONDS:-10} bash tests/test_soak.sh ./$(BUILD)/agentshield
 cgroup-test-required: all
 	AGENTSHIELD_REQUIRE_CGROUP_TEST=1 bash tests/test_cgroup.sh ./$(BUILD)/agentshield
 sanitize: CFLAGS := -O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,undefined
@@ -38,6 +41,31 @@ java: | $(BUILD)
 java-test: java
 	javac --release 17 -cp $(BUILD)/java -d $(BUILD)/java desktop/src/test/java/io/agentshield/DesktopAppTest.java
 	java -Djava.awt.headless=true -cp $(BUILD)/java io.agentshield.DesktopAppTest
+jar: java
+	jar --create --file $(BUILD)/agentshield-desktop.jar --main-class io.agentshield.DesktopApp -C $(BUILD)/java .
+sbom:
+	python3 scripts/generate_sbom.py --output $(BUILD)/agentshield-source.cdx.json
+provenance: all jar sbom
+	python3 scripts/generate_provenance.py --output $(BUILD)/agentshield-provenance.json $(BUILD)/agentshield $(BUILD)/agentshield-desktop.jar $(BUILD)/agentshield-source.cdx.json
+dist: all jar sbom provenance
+	bash scripts/package-linux.sh
+verify-dist: dist
+	bash scripts/verify-package.sh $(BUILD)/dist/agentshield-0.1.0-linux.tar.gz
+	python3 tests/test_package_verifier.py
+deterministic-package: verify-dist
+	cp $(BUILD)/dist/agentshield-0.1.0-linux.tar.gz $(BUILD)/dist/first.tar.gz
+	bash scripts/package-linux.sh
+	cmp $(BUILD)/dist/first.tar.gz $(BUILD)/dist/agentshield-0.1.0-linux.tar.gz
+install: all jar
+	install -d $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/lib/agentshield $(DESTDIR)$(PREFIX)/share/agentshield/policies $(DESTDIR)$(PREFIX)/share/doc/agentshield
+	install -m 0755 $(BUILD)/agentshield $(DESTDIR)$(PREFIX)/bin/agentshield
+	install -m 0755 scripts/agentshield-desktop $(DESTDIR)$(PREFIX)/bin/agentshield-desktop
+	install -m 0644 $(BUILD)/agentshield-desktop.jar $(DESTDIR)$(PREFIX)/lib/agentshield/agentshield-desktop.jar
+	install -m 0644 policies/*.policy $(DESTDIR)$(PREFIX)/share/agentshield/policies/
+	install -m 0644 README.md SECURITY.md LICENSE $(DESTDIR)$(PREFIX)/share/doc/agentshield/
+uninstall:
+	test -n "$(DESTDIR)$(PREFIX)" && rm -f $(DESTDIR)$(PREFIX)/bin/agentshield
+	test -n "$(DESTDIR)$(PREFIX)" && rm -f $(DESTDIR)$(PREFIX)/bin/agentshield-desktop $(DESTDIR)$(PREFIX)/lib/agentshield/agentshield-desktop.jar
 run-gui: all java
 	java -cp $(BUILD)/java io.agentshield.DesktopApp ./$(BUILD)/agentshield
 clean:

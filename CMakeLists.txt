@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(AgentShield VERSION 0.1.0 LANGUAGES C CXX)
+include(GNUInstallDirs)
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  message(FATAL_ERROR "AgentShield 0.1 native sensor supports Linux only; see docs/PLATFORM_SUPPORT.md")
+endif()
 find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -21,3 +25,24 @@ if(BUILD_TESTING)
   target_link_libraries(test_risk PRIVATE agentshield_engine)
   add_test(NAME risk_engine COMMAND test_risk)
 endif()
+
+install(TARGETS agentshield RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES policies/baseline.policy policies/observe.policy
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/agentshield/policies)
+install(FILES README.md SECURITY.md CONTRIBUTING.md docs/AUDIT.md docs/POLICY.md
+        docs/PRIVACY.md docs/SECURITY_ARCHITECTURE.md docs/THREAT_MODEL.md
+        docs/VALIDATION.md docs/DISTRIBUTION.md docs/PLATFORM_SUPPORT.md
+        DESTINATION ${CMAKE_INSTALL_DOCDIR})
+install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
+
+set(CPACK_PACKAGE_NAME "agentshield")
+set(CPACK_PACKAGE_VENDOR "AgentShield")
+set(CPACK_PACKAGE_CONTACT "AgentShield maintainers")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Runtime security visibility and policy enforcement for AI agents")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_GENERATOR "TGZ;DEB")
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+set(CPACK_ARCHIVE_FILE_NAME "agentshield-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+include(CPack)

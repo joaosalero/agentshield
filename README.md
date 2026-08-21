@@ -40,6 +40,7 @@ headers, and JDK 17 for the optional desktop dashboard.
 - Optional delegated cgroup v2 tree limits and reliable descendant termination
 - Read-only `/proc` sensor written in C and policy engine written in C++17
 - Unit, integration, redaction, sanitizer, CMake, and CI validation
+- Deterministic Linux packaging, CycloneDX source inventory, in-toto build metadata, and CPack packages
 
 ## Architecture
 
@@ -124,7 +125,8 @@ between snapshots, and a compromised kernel is outside the trust boundary.
 
 See [the policy guide](docs/POLICY.md), [authenticated audit guide](docs/AUDIT.md), [the security architecture](docs/SECURITY_ARCHITECTURE.md),
 [privacy guide](docs/PRIVACY.md), [threat model](docs/THREAT_MODEL.md), and
-[security policy](SECURITY.md).
+[distribution guide](docs/DISTRIBUTION.md), [platform support matrix](docs/PLATFORM_SUPPORT.md),
+and [security policy](SECURITY.md).
 
 ## Roadmap
 

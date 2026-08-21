@@ -2,6 +2,8 @@
 /build-cmake/
 *.o
 *.class
+*.py[cod]
+__pycache__/
 *.log
 *.key
 audit*.jsonl
