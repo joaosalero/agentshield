@@ -108,9 +108,9 @@ policy_file="$policy_dir/enforce.policy"
 cat >"$policy_file" <<'POLICY'
 version 1
 mode enforce
-require-full-coverage true
-allow-root false
-allow-capabilities false
+require-full-coverage false
+allow-root true
+allow-capabilities true
 max-risk-score 100
 default credential allow
 default sensitive-file allow
