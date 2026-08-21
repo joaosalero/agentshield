@@ -26,6 +26,15 @@ sources. Sensor snapshots are validated against process start time before and
 after collection to reject PID reuse. The C sensor, C++ policy engine, CLI/JSON
 boundary and Java dashboard are independently testable layers.
 
+For continuous monitoring, the engine compares consecutive successful
+assessments. It emits explicit grant and revocation events for credential-like
+names, sensitive resources, effective privilege state, and collection
+coverage. A failed collection does not replace the last trusted baseline.
+
+The desktop access timeline is bounded to 500 rows to avoid unbounded memory
+growth. It is session-local and is not written unless the operator explicitly
+selects an audit file in the native monitor.
+
 ## Fail-closed behavior
 
 Invalid policies, unsafe audit files, inability to apply a requested resource

@@ -20,6 +20,9 @@ findings in a live desktop dashboard or machine-readable event stream.
 - Effective UID and Linux capability detection
 - Sensitive open-file and network-socket visibility
 - Explainable rules with severity, evidence, score, and remediation
+- Access-drift detection for newly granted or revoked credentials, sensitive files,
+  sockets, privileges, and monitoring coverage
+- A bounded live access timeline that calls attention to dangerous new grants
 - Point-in-time inspection, continuous monitoring, or supervised command launch
 - JSON Lines contract designed for SIEM ingestion and future Helix Sentinel use
 - Java Swing dashboard with live credential and finding tables
@@ -70,12 +73,19 @@ ctest --test-dir build-cmake --output-on-failure
 
 ## Event model
 
-Each JSON line follows `io.agentshield.snapshot/v1` and contains:
+Each JSON line follows the backward-compatible `io.agentshield.snapshot/v1` contract and contains:
 
 - process identity and effective privilege metadata; command arguments are omitted;
 - credential names and classifications, never values;
 - security-relevant open resources;
 - normalized findings and a bounded 0–100 risk score.
+- a `changes` array describing grants and revocations since the preceding
+  successful snapshot; the first snapshot establishes the in-memory baseline.
+
+Change events contain direction, category, severity, a privacy-filtered
+identifier, and an `attention` flag. A lost observability surface is treated as
+a high-severity grant of uncertainty instead of being mistaken for reduced
+exposure. Baselines exist only in monitor memory and are not persisted.
 
 Reports may expose local paths and should be handled as security telemetry.
 

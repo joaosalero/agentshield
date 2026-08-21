@@ -36,6 +36,31 @@ python3 -c 'import json,sys; [json.loads(x) for x in open(sys.argv[1]) if x.stri
 rm -f "$inherit_stdout" "$inherit_stderr"
 echo "supervised isolation controls: OK"
 
+drift_output=$(
+  drift_dir=$(mktemp -d)
+  trap 'rm -rf "$drift_dir"' EXIT
+  drift_file="$drift_dir/synthetic.env"
+  baseline_ready="$drift_dir/baseline-ready"
+  close_access="$drift_dir/close-access"
+  exit_agent="$drift_dir/exit-agent"
+  telemetry="$drift_dir/telemetry.jsonl"
+  : >"$drift_file"
+  "$binary" run --interval 20 --audit "$telemetry" -- sh -c 'while test ! -e "$2"; do sleep 0.01; done; exec 8<"$1"; while test ! -e "$3"; do sleep 0.01; done; exec 8<&-; while test ! -e "$4"; do sleep 0.01; done' sh "$drift_file" "$baseline_ready" "$close_access" "$exit_agent" >"$drift_dir/stdout.jsonl" &
+  drift_monitor=$!
+  for _ in $(seq 1 200); do test -s "$telemetry" && break; sleep 0.01; done
+  test -s "$telemetry"
+  : >"$baseline_ready"
+  for _ in $(seq 1 200); do grep -q '"direction":"GRANTED".*"category":"filesystem"' "$telemetry" && break; sleep 0.01; done
+  grep -q '"direction":"GRANTED".*"category":"filesystem"' "$telemetry"
+  : >"$close_access"
+  for _ in $(seq 1 200); do grep -q '"direction":"REVOKED".*"category":"filesystem"' "$telemetry" && break; sleep 0.01; done
+  grep -q '"direction":"REVOKED".*"category":"filesystem"' "$telemetry"
+  : >"$exit_agent"
+  wait "$drift_monitor"
+  cat "$telemetry"
+)
+python3 -c 'import json,sys; rows=[json.loads(x) for x in sys.stdin if x.strip()]; changes=[c for r in rows for c in r["changes"]]; assert any(c["direction"]=="GRANTED" and c["category"]=="filesystem" and c["attention"] for c in changes); assert any(c["direction"]=="REVOKED" and c["category"]=="filesystem" and not c["attention"] for c in changes); print("access drift timeline: OK")' <<<"$drift_output"
+
 set +e
 exec_error=$("$binary" run -- definitely-not-an-agentshield-command 2>&1 >/dev/null)
 exec_code=$?
