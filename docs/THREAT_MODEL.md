@@ -22,6 +22,10 @@ they can contain process metadata and local paths.
 | Data exfiltration | Signal open sockets | Endpoint attribution requires the planned event sensor |
 | Telemetry injection | JSON escaping and fixed event schema | Event signing is planned |
 | Resource exhaustion | Fixed collection bounds and truncation finding | Very large process trees need aggregation controls |
+| Protocol injection | Agent output discarded; TSV controls normalized; JSON escaped | Explicit output inheritance exposes terminal logs |
+| Privilege escalation | `no_new_privs` default and capabilities finding | Existing privileges are observed, not revoked |
+| Audit path attack | `O_NOFOLLOW`, ownership/type/mode validation, `0600` | Root and a compromised kernel remain trusted |
+| PID reuse | Process start time checked before and after snapshot | Snapshot fields are not an atomic kernel transaction |
 
 ## Non-goals for v0.1
 

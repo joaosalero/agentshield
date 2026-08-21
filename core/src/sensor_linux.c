@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,9 +34,11 @@ static int contains_ci(const char *text, const char *needle) {
 }
 
 static uint8_t credential_risk(const char *name) {
+    static const char *known_non_secrets[] = {"DBUS_SESSION_BUS_ADDRESS"};
     static const char *critical[] = {"private_key", "secret_key", "master_key", "root_token"};
     static const char *high[] = {"token", "secret", "password", "passwd", "api_key", "apikey", "credential"};
     static const char *medium[] = {"auth", "cookie", "session", "key"};
+    for (size_t i = 0; i < sizeof known_non_secrets / sizeof *known_non_secrets; ++i) if (strcmp(name, known_non_secrets[i]) == 0) return 0;
     for (size_t i = 0; i < sizeof critical / sizeof *critical; ++i) if (contains_ci(name, critical[i])) return 4;
     for (size_t i = 0; i < sizeof high / sizeof *high; ++i) if (contains_ci(name, high[i])) return 3;
     for (size_t i = 0; i < sizeof medium / sizeof *medium; ++i) if (contains_ci(name, medium[i])) return 2;
@@ -48,11 +51,11 @@ static int sensitive_path(const char *path) {
     return 0;
 }
 
-static void parse_status(int pid, as_snapshot *snapshot) {
+static int parse_status(int pid, as_snapshot *snapshot) {
     char path[64], line[512];
     snprintf(path, sizeof path, "/proc/%d/status", pid);
     FILE *file = fopen(path, "r");
-    if (!file) return;
+    if (!file) return -1;
     while (fgets(line, sizeof line, file)) {
         if (sscanf(line, "Name:%255s", snapshot->process_name) == 1) continue;
         if (sscanf(line, "PPid:%d", &snapshot->parent_pid) == 1) continue;
@@ -65,18 +68,23 @@ static void parse_status(int pid, as_snapshot *snapshot) {
         if (sscanf(line, "CapEff:%llx", &caps) == 1) snapshot->effective_capabilities = (uint64_t)caps;
     }
     fclose(file);
+    return 0;
 }
 
-static void parse_environment(int pid, as_snapshot *snapshot) {
+static int parse_environment(int pid, as_snapshot *snapshot) {
     char path[64];
     snprintf(path, sizeof path, "/proc/%d/environ", pid);
-    FILE *file = fopen(path, "rb");
-    if (!file) return;
+    int file = open(path, O_RDONLY | O_CLOEXEC);
+    if (file < 0) return -1;
     char name[AS_MAX_NAME];
     size_t name_length = 0;
     int reading_name = 1;
-    int byte;
-    while ((byte = fgetc(file)) != EOF) {
+    unsigned char byte = 0;
+    int read_failed = 0;
+    for (;;) {
+        ssize_t count = read(file, &byte, 1);
+        if (count == 0) break;
+        if (count < 0) { if (errno == EINTR) continue; read_failed = 1; break; }
         if (byte == '\0') {
             name_length = 0;
             reading_name = 1;
@@ -100,9 +108,12 @@ static void parse_environment(int pid, as_snapshot *snapshot) {
             if (name_length < sizeof name - 1) name[name_length++] = (char)byte;
             else ++snapshot->truncated_items;
         }
+        if (!reading_name) byte = 0;
     }
     memset(name, 0, sizeof name);
-    fclose(file);
+    byte = 0;
+    close(file);
+    return read_failed ? -1 : 0;
 }
 
 static unsigned long long process_start_time(int pid) {
@@ -125,11 +136,11 @@ static unsigned long long process_start_time(int pid) {
     return 0;
 }
 
-static void parse_resources(int pid, as_snapshot *snapshot) {
+static int parse_resources(int pid, as_snapshot *snapshot) {
     char directory_path[64];
     snprintf(directory_path, sizeof directory_path, "/proc/%d/fd", pid);
     DIR *directory = opendir(directory_path);
-    if (!directory) return;
+    if (!directory) return -1;
     struct dirent *entry;
     while ((entry = readdir(directory))) {
         if (entry->d_name[0] == '.') continue;
@@ -151,6 +162,7 @@ static void parse_resources(int pid, as_snapshot *snapshot) {
         } else ++snapshot->truncated_items;
     }
     closedir(directory);
+    return 0;
 }
 
 int as_collect_snapshot(int pid, as_snapshot *snapshot, char *error, size_t error_size) {
@@ -164,9 +176,9 @@ int as_collect_snapshot(int pid, as_snapshot *snapshot, char *error, size_t erro
     char path[64];
     snprintf(path, sizeof path, "/proc/%d/exe", pid); read_link(path, snapshot->executable, sizeof snapshot->executable);
     snprintf(path, sizeof path, "/proc/%d/cwd", pid); read_link(path, snapshot->working_directory, sizeof snapshot->working_directory);
-    parse_status(pid, snapshot);
-    parse_environment(pid, snapshot);
-    parse_resources(pid, snapshot);
+    if (parse_status(pid, snapshot) == 0) snapshot->coverage |= AS_COVERAGE_STATUS;
+    if (parse_environment(pid, snapshot) == 0) snapshot->coverage |= AS_COVERAGE_ENVIRONMENT;
+    if (parse_resources(pid, snapshot) == 0) snapshot->coverage |= AS_COVERAGE_RESOURCES;
     unsigned long long identity_after = process_start_time(pid);
     if (!identity_before || identity_before != identity_after) {
         memset(snapshot, 0, sizeof *snapshot);
