@@ -5,7 +5,7 @@ version="$(python3 "$root/scripts/read_version.py" "$root/VERSION")"
 architecture="${AGENTSHIELD_DEB_ARCH:-$(dpkg --print-architecture)}"
 stage="$root/build/deb/agentshield-$version-$architecture"
 output="$root/build/dist/agentshield_${version}_${architecture}.deb"
-runtime_dependencies="$(ldd "$root/build/agentshield" | awk '{for(i=1;i<=NF;i++) if($i ~ /^\//){print $i; break}}' | while IFS= read -r library; do dpkg-query -S "$library" 2>/dev/null | awk -F: '$1 ~ /^[a-z0-9][a-z0-9+.-]*$/ {print $1; exit}'; done | sort -u | paste -sd, -)"
+runtime_dependencies="$(ldd "$root/build/agentshield" | awk '{for(i=1;i<=NF;i++) if($i ~ /^\//){print $i; break}}' | while IFS= read -r library; do { dpkg-query -S "$library" 2>/dev/null || dpkg-query -S "*/$(basename "$library")" 2>/dev/null || true; } | awk -F: '$1 ~ /^[a-z0-9][a-z0-9+.-]*$/ {print $1; exit}'; done | sort -u | paste -sd, -)"
 test -n "$runtime_dependencies" || { echo "unable to resolve native runtime dependencies" >&2; exit 1; }
 case "$stage" in "$root"/build/deb/agentshield-*) ;; *) echo "refusing unsafe package path" >&2; exit 1;; esac
 rm -rf "$stage"
