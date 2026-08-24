@@ -32,7 +32,8 @@ development headers, and JDK 17 for the optional desktop dashboard.
 - Point-in-time inspection, continuous monitoring, or supervised command launch
 - Authenticated HMAC-SHA-256 audit chain with offline verification
 - Verified `io.helix-sentinel.agentshield/v1` JSONL export without network transmission
-- Java Swing dashboard with live credential and finding tables
+- Modern Java Swing security console with live exposure metrics, risk-aware tables,
+  policy decisions, access timeline, and privacy-first monitoring controls
 - Strict privacy mode for shared telemetry and demonstrations
 - Owner-only audit keys/logs, append pre-verification, and fail-closed size retention
 - Secure supervised execution with `no_new_privs`, no core dumps, descriptor
