@@ -15,7 +15,20 @@ regular-file types, safe paths and modes, and absence of links or special files.
 CI repeats package verification under a restrictive `umask 077`; archive
 directory permissions are normalized to `0755` and never inherited from the builder.
 
-The CMake build additionally emits `.tar.gz` and Debian packages through CPack:
+The primary end-user installer is a Debian package containing the native monitor,
+desktop console, application-menu shortcut, scalable icon, policies, documentation,
+and license. Build and verify it with:
+
+```bash
+make verify-deb
+```
+
+Install with `sudo apt install ./build/dist/agentshield_*.deb` and remove with
+`sudo apt remove agentshield`. Removal preserves user-created audit logs and policies.
+The helper scripts `scripts/install-package.sh` and `scripts/uninstall-package.sh`
+provide the same guided flow.
+
+The CMake build additionally supports `.tar.gz` and Debian packages through CPack:
 
 ```bash
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release

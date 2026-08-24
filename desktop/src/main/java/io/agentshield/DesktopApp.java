@@ -34,6 +34,7 @@ public final class DesktopApp extends JFrame {
     private final JButton start = new ModernButton("Start monitoring", BLUE, Color.WHITE);
     private final JButton stop = new ModernButton("Stop", new Color(231, 237, 245), INK);
     private final JButton verifyAudit = new ModernButton("Verify integrity", new Color(231, 237, 245), INK);
+    private final JButton demo = new ModernButton("Launch Demo Lab", new Color(18, 156, 139), Color.WHITE);
     private final String executable;
     private volatile Process monitor, auditVerifier;
     private volatile Thread monitorWorker;
@@ -111,7 +112,7 @@ public final class DesktopApp extends JFrame {
 
     private JPanel controlCenter() {
         RoundedPanel card = new RoundedPanel(new Color(234, 240, 248), 20); card.setLayout(new BorderLayout(16, 12)); card.setBorder(new EmptyBorder(16, 18, 16, 18));
-        JPanel primary = transparent(new FlowLayout(FlowLayout.LEFT, 10, 0)); primary.add(label("MONITORING CONTROL", MUTED, 10, Font.BOLD)); primary.add(label("Agent PID", INK, 12, Font.BOLD)); primary.add(pid); start.setMnemonic('S'); primary.add(start); stop.setMnemonic('T'); stop.setEnabled(false); primary.add(stop); primary.add(strictPrivacy); strictPrivacy.setOpaque(false); strictPrivacy.setFont(UI); card.add(primary, BorderLayout.NORTH);
+        JPanel primary = transparent(new FlowLayout(FlowLayout.LEFT, 10, 0)); primary.add(label("MONITORING CONTROL", MUTED, 10, Font.BOLD)); primary.add(label("Agent PID", INK, 12, Font.BOLD)); primary.add(pid); start.setMnemonic('S'); primary.add(start); stop.setMnemonic('T'); stop.setEnabled(false); primary.add(stop); primary.add(strictPrivacy); strictPrivacy.setOpaque(false); strictPrivacy.setFont(UI); primary.add(Box.createHorizontalStrut(12)); primary.add(demo); card.add(primary, BorderLayout.NORTH);
         JPanel paths = transparent(); paths.setLayout(new BoxLayout(paths, BoxLayout.Y_AXIS));
         JPanel policyLine = transparent(new FlowLayout(FlowLayout.LEFT, 9, 2)); policyLine.add(label("Policy", MUTED, 11, Font.BOLD)); policyLine.add(policyPath); JButton browse = secondary("Browse…"); policyLine.add(browse); policyLine.add(label("Protected audit", MUTED, 11, Font.BOLD)); policyLine.add(auditPath); JButton browseAudit = secondary("Choose…"); policyLine.add(browseAudit); paths.add(policyLine);
         JPanel keyLine = transparent(new FlowLayout(FlowLayout.LEFT, 9, 2)); keyLine.add(label("Integrity key", MUTED, 11, Font.BOLD)); keyLine.add(auditKeyPath); JButton browseKey = secondary("Choose…"); keyLine.add(browseKey); verifyAudit.setMnemonic('V'); keyLine.add(verifyAudit); keyLine.add(label("Tamper-evident local audit trail", MUTED, 11)); paths.add(keyLine); card.add(paths, BorderLayout.CENTER);
@@ -120,12 +121,39 @@ public final class DesktopApp extends JFrame {
 
     private void bindActions() {
         pid.getAccessibleContext().setAccessibleName("Agent process ID"); policyPath.getAccessibleContext().setAccessibleName("Optional audit policy file"); auditPath.getAccessibleContext().setAccessibleName("Protected audit log file"); auditKeyPath.getAccessibleContext().setAccessibleName("Audit integrity key file"); strictPrivacy.getAccessibleContext().setAccessibleDescription("Redacts process, credential, resource, endpoint, and cgroup identifiers");
-        start.addActionListener(e -> begin()); stop.addActionListener(e -> end()); verifyAudit.addActionListener(e -> verifyAudit());
+        start.addActionListener(e -> begin()); stop.addActionListener(e -> end()); verifyAudit.addActionListener(e -> verifyAudit()); demo.addActionListener(e -> startDemo());
         credentials.addTableModelListener(e -> updateCounts()); resources.addTableModelListener(e -> updateCounts()); findings.addTableModelListener(e -> updateCounts()); policy.addTableModelListener(e -> updateCounts());
     }
 
     private void choose(JTextField target, boolean save) { JFileChooser chooser = new JFileChooser(); int result = save ? chooser.showSaveDialog(this) : chooser.showOpenDialog(this); if (result == JFileChooser.APPROVE_OPTION) target.setText(chooser.getSelectedFile().getAbsolutePath()); }
     private void updateCounts() { counts[0].setText(String.valueOf(credentials.getRowCount())); counts[1].setText(String.valueOf(resources.getRowCount())); counts[2].setText(String.valueOf(findings.getRowCount())); counts[3].setText(String.valueOf(policy.getRowCount())); }
+
+    static List<String> demoEvents() { return List.of(
+        "SNAPSHOT\t{TIME}\tDEMO-2048\t12\tLOW\tdemo-agent\t1000\t0\tsandboxed\tdemo-lab",
+        "CREDENTIAL\tMEDIUM\tDEMO_CLOUD_TOKEN\tsynthetic environment",
+        "RESOURCE\tLOW\tfile\t/tmp/agentshield-demo/project-plan.txt\tfile\tlocal\tlocal\tOPEN",
+        "FINDING\tHIGH\tAS-DEMO-001\tCredential name visible to the agent\tDEMO_CLOUD_TOKEN (value never created)\tUse a scoped credential broker",
+        "CHANGE\t{TIME}\tGRANTED\tHIGH\tnetwork\thttps://example.invalid/api\tATTENTION",
+        "RESOURCE\tHIGH\tnetwork_socket\thttps://example.invalid/api\ttcp\t127.0.0.1:42000\t192.0.2.10:443\tSIMULATED",
+        "POLICY\tAPPROVAL\tnetwork\thttps://example.invalid/api\tExternal access requires approval\tATTENTION",
+        "POLICY\tDENY\tcredential\tDEMO_ADMIN_KEY\tAdministrative credentials are prohibited\tBLOCKING",
+        "CHANGE\t{TIME}\tREVOKED\tLOW\tnetwork\thttps://example.invalid/api\tRESOLVED"
+    ); }
+
+    private void startDemo() {
+        if (monitor != null) { JOptionPane.showMessageDialog(this, "Stop live monitoring before launching the Demo Lab."); return; }
+        credentials.setRowCount(0); resources.setRowCount(0); findings.setRowCount(0); policy.setRowCount(0); activity.setRowCount(0);
+        identity.setText("SIMULATION  •  No real credentials, personal files, or external connections are used");
+        status.setState("DEMO LAB  •  STARTING", CYAN, false); demo.setEnabled(false); start.setEnabled(false);
+        var events = demoEvents(); final int[] index = {0};
+        javax.swing.Timer timer = new javax.swing.Timer(850, null);
+        timer.addActionListener(e -> {
+            if (index[0] >= events.size()) { timer.stop(); demo.setEnabled(true); start.setEnabled(true); status.setState("DEMO COMPLETE  •  THREAT CONTAINED", new Color(22, 139, 118), false); return; }
+            String event = events.get(index[0]++).replace("{TIME}", String.valueOf(System.currentTimeMillis()));
+            handle(event);
+        });
+        timer.setInitialDelay(250); timer.start();
+    }
 
     private void begin() {
         String target = pid.getText().trim(); if (!target.matches("[1-9][0-9]*")) { JOptionPane.showMessageDialog(this, "Enter a valid process ID."); return; }

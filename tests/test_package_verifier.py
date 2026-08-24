@@ -18,6 +18,9 @@ REQUIRED = [
     "agentshield-source.cdx.json",
     "agentshield-provenance.json",
     "share/doc/agentshield/VERSION",
+    "share/applications/io.agentshield.AgentShield.desktop",
+    "share/icons/hicolor/scalable/apps/io.agentshield.AgentShield.svg",
+    "share/metainfo/io.agentshield.AgentShield.metainfo.xml",
 ]
 
 

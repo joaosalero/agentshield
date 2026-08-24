@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.agentshield.agentshield</id>
+  <name>AgentShield</name>
+  <summary>Runtime security visibility and policy enforcement for AI agents</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>AgentShield shows which credential names, files, network resources, and privileges an AI agent can access without collecting credential values.</p>
+    <p>Its guided Demo Lab uses only synthetic data and performs no external network connections.</p>
+  </description>
+  <launchable type="desktop-id">io.agentshield.AgentShield.desktop</launchable>
+  <url type="homepage">https://github.com/joaosalero/agentshield</url>
+  <developer id="io.agentshield"><name>AgentShield maintainers</name></developer>
+  <content_rating type="oars-1.1"/>
+  <releases><release version="0.1.0" date="2026-08-25"><description><p>Initial portfolio preview with guided Demo Lab and Linux installer.</p></description></release></releases>
+  <provides><binary>agentshield</binary><binary>agentshield-desktop</binary></provides>
+  <categories><category>System</category><category>Security</category></categories>
+</component>

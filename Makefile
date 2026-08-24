@@ -13,7 +13,7 @@ LDLIBS := -lcrypto
 BUILD := build
 PREFIX ?= /usr/local
 OBJECTS := $(BUILD)/sensor.o $(BUILD)/risk_engine.o $(BUILD)/audit_log.o $(BUILD)/main.o
-.PHONY: all check-version test soak cgroup-test-required sanitize java java-test jar sbom provenance dist verify-dist deterministic-package install uninstall run-gui clean
+.PHONY: all check-version test soak cgroup-test-required sanitize java java-test jar sbom provenance dist verify-dist deterministic-package deb verify-deb install uninstall run-gui clean
 all: check-version $(BUILD)/agentshield
 check-version:
 	printf '%s\n' '$(VERSION)' | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$'
@@ -66,16 +66,28 @@ deterministic-package: verify-dist
 	cp $(BUILD)/dist/agentshield-$(VERSION)-linux.tar.gz $(BUILD)/dist/first.tar.gz
 	bash scripts/package-linux.sh
 	cmp $(BUILD)/dist/first.tar.gz $(BUILD)/dist/agentshield-$(VERSION)-linux.tar.gz
+deb: all jar
+	bash scripts/package-deb.sh
+verify-deb: deb
+	cp $(BUILD)/dist/agentshield_$(VERSION)_$$(dpkg --print-architecture).deb $(BUILD)/dist/agentshield-first.deb
+	bash scripts/package-deb.sh
+	cmp $(BUILD)/dist/agentshield-first.deb $(BUILD)/dist/agentshield_$(VERSION)_$$(dpkg --print-architecture).deb
+	bash scripts/verify-deb.sh $(BUILD)/dist/agentshield_$(VERSION)_$$(dpkg --print-architecture).deb
 install: all jar
 	install -d $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/lib/agentshield $(DESTDIR)$(PREFIX)/share/agentshield/policies $(DESTDIR)$(PREFIX)/share/doc/agentshield
+	install -d $(DESTDIR)$(PREFIX)/share/applications $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps $(DESTDIR)$(PREFIX)/share/metainfo
 	install -m 0755 $(BUILD)/agentshield $(DESTDIR)$(PREFIX)/bin/agentshield
 	install -m 0755 scripts/agentshield-desktop $(DESTDIR)$(PREFIX)/bin/agentshield-desktop
 	install -m 0644 $(BUILD)/agentshield-desktop.jar $(DESTDIR)$(PREFIX)/lib/agentshield/agentshield-desktop.jar
 	install -m 0644 policies/*.policy $(DESTDIR)$(PREFIX)/share/agentshield/policies/
 	install -m 0644 README.md SECURITY.md LICENSE $(DESTDIR)$(PREFIX)/share/doc/agentshield/
+	install -m 0644 packaging/linux/io.agentshield.AgentShield.desktop $(DESTDIR)$(PREFIX)/share/applications/
+	install -m 0644 packaging/linux/io.agentshield.AgentShield.svg $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/
+	install -m 0644 packaging/linux/io.agentshield.AgentShield.metainfo.xml $(DESTDIR)$(PREFIX)/share/metainfo/
 uninstall:
 	test -n "$(DESTDIR)$(PREFIX)" && rm -f $(DESTDIR)$(PREFIX)/bin/agentshield
 	test -n "$(DESTDIR)$(PREFIX)" && rm -f $(DESTDIR)$(PREFIX)/bin/agentshield-desktop $(DESTDIR)$(PREFIX)/lib/agentshield/agentshield-desktop.jar
+	test -n "$(DESTDIR)$(PREFIX)" && rm -f $(DESTDIR)$(PREFIX)/share/applications/io.agentshield.AgentShield.desktop $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/io.agentshield.AgentShield.svg $(DESTDIR)$(PREFIX)/share/metainfo/io.agentshield.AgentShield.metainfo.xml
 run-gui: all java
 	java -cp $(BUILD)/java io.agentshield.DesktopApp ./$(BUILD)/agentshield
 clean:

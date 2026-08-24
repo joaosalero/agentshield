@@ -36,6 +36,9 @@ def main():
         f"{expected_root}/agentshield-source.cdx.json": 0o644,
         f"{expected_root}/agentshield-provenance.json": 0o644,
         f"{expected_root}/share/doc/agentshield/VERSION": 0o644,
+        f"{expected_root}/share/applications/io.agentshield.AgentShield.desktop": 0o644,
+        f"{expected_root}/share/icons/hicolor/scalable/apps/io.agentshield.AgentShield.svg": 0o644,
+        f"{expected_root}/share/metainfo/io.agentshield.AgentShield.metainfo.xml": 0o644,
     }
     seen = set()
     packaged_version = None

@@ -36,6 +36,10 @@ public final class DesktopAppTest {
         DesktopApp.prependBounded(history,new Object[]{"second"},2);
         DesktopApp.prependBounded(history,new Object[]{"third"},2);
         if(history.getRowCount()!=2||!history.getValueAt(0,0).equals("third")||!history.getValueAt(1,0).equals("second"))throw new AssertionError("timeline retention bound failed");
+        var demo=DesktopApp.demoEvents();
+        if(demo.size()<8||demo.stream().noneMatch(event->event.startsWith("POLICY\tDENY")))throw new AssertionError("guided demo scenario is incomplete");
+        String demoPayload=String.join("\n",demo);
+        if(!demoPayload.contains("example.invalid")||demoPayload.contains("OPENAI_API_KEY")||demoPayload.contains("AKIA"))throw new AssertionError("demo safety contract changed");
         System.out.println("desktop behavior contracts: OK");
     }
 }

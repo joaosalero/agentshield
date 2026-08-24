@@ -34,6 +34,7 @@ development headers, and JDK 17 for the optional desktop dashboard.
 - Verified `io.helix-sentinel.agentshield/v1` JSONL export without network transmission
 - Modern Java Swing security console with live exposure metrics, risk-aware tables,
   policy decisions, access timeline, and privacy-first monitoring controls
+- Guided Demo Lab with progressive, clearly labelled synthetic security events
 - Strict privacy mode for shared telemetry and demonstrations
 - Owner-only audit keys/logs, append pre-verification, and fail-closed size retention
 - Secure supervised execution with `no_new_privs`, no core dumps, descriptor
@@ -82,6 +83,24 @@ Desktop dashboard (JDK 17+):
 make java
 make run-gui
 ```
+
+Choose **Launch Demo Lab** to see a complete credential, resource, policy, and
+containment scenario. The lab uses no real secrets, personal files, or external
+connections and never mixes synthetic events with a protected audit log.
+
+Installable Debian package:
+
+```bash
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release --parallel
+cpack --config build-release/CPackConfig.cmake -G DEB
+sudo apt install ./agentshield_*.deb
+```
+
+The installer registers AgentShield in the application menu with its own icon.
+Uninstall with `sudo apt remove agentshield`; user-created audits and policies are
+preserved. See the [AI and data-science strategy](docs/AI_AND_DATA_SCIENCE.md) for
+the optional, privacy-preserving advisory layer.
 
 Alternative CMake build:
 
