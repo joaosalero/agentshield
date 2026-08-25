@@ -39,3 +39,18 @@ release environment.
 Coverage includes SHA-256 and RFC HMAC vectors, canonical Base64 enforcement,
 event mutation, wrong-key rejection, sequence/chain validation, exclusive
 writer behavior, retention limits, strict privacy, and verified Helix export.
+
+## Behavioral anomaly calibration baseline
+
+- Date: 2026-08-25
+- Command: `make test`
+- Synthetic scenarios: 20 independent in-memory sessions
+- Complete normal observations evaluated after warm-up: 140
+- False-positive rate: 0.00 in this bounded synthetic set
+- Material exposure surges detected: 20/20 (1.00 detection rate)
+
+`tests/test_behavior_eval.cpp` is a regression gate, not a claim about production
+prevalence or general model accuracy. Real-world thresholds require a larger,
+versioned corpus with representative agent workloads. The test additionally
+verifies that incomplete observability cannot train the baseline and that an
+advisory never changes deterministic risk or policy enforcement.

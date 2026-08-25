@@ -48,6 +48,9 @@ if(BUILD_TESTING)
   add_executable(test_risk tests/test_risk.cpp)
   target_link_libraries(test_risk PRIVATE agentshield_engine)
   add_test(NAME risk_engine COMMAND test_risk)
+  add_executable(test_behavior_eval tests/test_behavior_eval.cpp)
+  target_link_libraries(test_behavior_eval PRIVATE agentshield_engine)
+  add_test(NAME behavior_evaluation COMMAND test_behavior_eval)
 endif()
 
 install(TARGETS agentshield RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
@@ -64,7 +67,7 @@ install(FILES policies/baseline.policy policies/observe.policy
 install(FILES README.md SECURITY.md CONTRIBUTING.md docs/AUDIT.md docs/POLICY.md
         docs/PRIVACY.md docs/SECURITY_ARCHITECTURE.md docs/THREAT_MODEL.md
         docs/VALIDATION.md docs/DISTRIBUTION.md docs/PLATFORM_SUPPORT.md
-        docs/AI_AND_DATA_SCIENCE.md
+        docs/AI_AND_DATA_SCIENCE.md docs/BEHAVIOR_ANALYTICS.md
         DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(FILES LICENSE VERSION DESTINATION ${CMAKE_INSTALL_DOCDIR})
 

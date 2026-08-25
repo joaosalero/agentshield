@@ -17,6 +17,7 @@ install -m 0644 "$root/build/agentshield-source.cdx.json" "$stage/agentshield-so
 install -m 0644 "$root/build/agentshield-provenance.json" "$stage/agentshield-provenance.json"
 install -m 0644 "$root"/policies/*.policy "$stage/share/agentshield/policies/"
 install -m 0644 "$root/README.md" "$root/SECURITY.md" "$root/LICENSE" "$stage/share/doc/agentshield/"
+install -m 0644 "$root"/docs/*.md "$stage/share/doc/agentshield/"
 install -m 0644 "$root/VERSION" "$stage/share/doc/agentshield/VERSION"
 install -m 0644 "$root/packaging/linux/io.agentshield.AgentShield.desktop" "$stage/share/applications/"
 install -m 0644 "$root/packaging/linux/io.agentshield.AgentShield.svg" "$stage/share/icons/hicolor/scalable/apps/"

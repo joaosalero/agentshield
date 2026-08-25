@@ -29,6 +29,7 @@ install -m 0755 "$root/scripts/agentshield-desktop" "$stage/usr/bin/agentshield-
 install -m 0644 "$root/build/agentshield-desktop.jar" "$stage/usr/lib/agentshield/agentshield-desktop.jar"
 install -m 0644 "$root"/policies/*.policy "$stage/usr/share/agentshield/policies/"
 install -m 0644 "$root/README.md" "$root/SECURITY.md" "$root/LICENSE" "$root/VERSION" "$stage/usr/share/doc/agentshield/"
+install -m 0644 "$root"/docs/*.md "$stage/usr/share/doc/agentshield/"
 install -m 0644 "$root/packaging/linux/io.agentshield.AgentShield.desktop" "$stage/usr/share/applications/"
 install -m 0644 "$root/packaging/linux/io.agentshield.AgentShield.svg" "$stage/usr/share/icons/hicolor/scalable/apps/"
 install -m 0644 "$root/packaging/linux/io.agentshield.AgentShield.metainfo.xml" "$stage/usr/share/metainfo/"

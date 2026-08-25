@@ -31,8 +31,11 @@ $(BUILD)/agentshield: $(OBJECTS)
 	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o $@
 $(BUILD)/test_risk: tests/test_risk.cpp $(BUILD)/sensor.o $(BUILD)/risk_engine.o $(BUILD)/audit_log.o
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
-test: all $(BUILD)/test_risk
+$(BUILD)/test_behavior_eval: tests/test_behavior_eval.cpp $(BUILD)/sensor.o $(BUILD)/risk_engine.o $(BUILD)/audit_log.o
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+test: all $(BUILD)/test_risk $(BUILD)/test_behavior_eval
 	./$(BUILD)/test_risk
+	./$(BUILD)/test_behavior_eval
 	python3 tests/test_version_contract.py
 	bash tests/test_make_version_rebuild.sh
 	bash tests/test_cli.sh ./$(BUILD)/agentshield
@@ -81,6 +84,7 @@ install: all jar
 	install -m 0644 $(BUILD)/agentshield-desktop.jar $(DESTDIR)$(PREFIX)/lib/agentshield/agentshield-desktop.jar
 	install -m 0644 policies/*.policy $(DESTDIR)$(PREFIX)/share/agentshield/policies/
 	install -m 0644 README.md SECURITY.md LICENSE $(DESTDIR)$(PREFIX)/share/doc/agentshield/
+	install -m 0644 docs/*.md $(DESTDIR)$(PREFIX)/share/doc/agentshield/
 	install -m 0644 packaging/linux/io.agentshield.AgentShield.desktop $(DESTDIR)$(PREFIX)/share/applications/
 	install -m 0644 packaging/linux/io.agentshield.AgentShield.svg $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/
 	install -m 0644 packaging/linux/io.agentshield.AgentShield.metainfo.xml $(DESTDIR)$(PREFIX)/share/metainfo/

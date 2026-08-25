@@ -35,6 +35,7 @@ development headers, and JDK 17 for the optional desktop dashboard.
 - Modern Java Swing security console with live exposure metrics, risk-aware tables,
   policy decisions, access timeline, and privacy-first monitoring controls
 - Guided Demo Lab with progressive, clearly labelled synthetic security events
+- In-memory behavioral anomaly baseline with explainable advisory findings
 - Strict privacy mode for shared telemetry and demonstrations
 - Owner-only audit keys/logs, append pre-verification, and fail-closed size retention
 - Secure supervised execution with `no_new_privs`, no core dumps, descriptor
@@ -148,6 +149,8 @@ See [the policy guide](docs/POLICY.md), [authenticated audit guide](docs/AUDIT.m
 [privacy guide](docs/PRIVACY.md), [threat model](docs/THREAT_MODEL.md), and
 [distribution guide](docs/DISTRIBUTION.md), [platform support matrix](docs/PLATFORM_SUPPORT.md),
 and [security policy](SECURITY.md).
+Behavioral analytics and its non-enforcement boundary are documented in the
+[local anomaly analytics guide](docs/BEHAVIOR_ANALYTICS.md).
 
 ## Roadmap
 

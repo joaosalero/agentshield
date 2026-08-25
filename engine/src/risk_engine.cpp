@@ -1,6 +1,7 @@
 #include "risk_engine.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <iomanip>
 #include <map>
 #include <sstream>
@@ -104,6 +105,48 @@ Assessment assess(const as_snapshot& snapshot) {
     return a;
 }
 
+BehavioralSignal BehaviorBaseline::observe(const Assessment& assessment) {
+    constexpr uint32_t full_coverage = AS_COVERAGE_STATUS | AS_COVERAGE_ENVIRONMENT | AS_COVERAGE_RESOURCES;
+    if ((assessment.snapshot.coverage & full_coverage) != full_coverage) {
+        BehavioralSignal unavailable; unavailable.observations = observations_; return unavailable;
+    }
+    std::size_t files = 0, sockets = 0, capability_bits = 0;
+    for (std::size_t i = 0; i < assessment.snapshot.resource_count; ++i) {
+        if (assessment.snapshot.resources[i].kind == AS_RESOURCE_SOCKET) ++sockets; else ++files;
+    }
+    for (uint64_t value = assessment.snapshot.effective_capabilities; value; value >>= 1U) capability_bits += value & 1U;
+    const std::array<double, 5> values{{static_cast<double>(assessment.snapshot.credential_count), static_cast<double>(files), static_cast<double>(sockets), static_cast<double>(capability_bits), static_cast<double>(assessment.risk_score)}};
+    const std::array<double, 5> minimum_change{{2.0, 3.0, 2.0, 1.0, 20.0}};
+    const std::array<const char*, 5> names{{"credential count", "sensitive file count", "network connection count", "capability count", "deterministic risk score"}};
+    BehavioralSignal signal; signal.observations = observations_ + 1; signal.warmed_up = observations_ >= 5;
+    double strongest = 0.0;
+    if (signal.warmed_up) {
+        for (std::size_t i = 0; i < values.size(); ++i) {
+            const auto& statistic = statistics_[i];
+            double variance = statistic.count > 1 ? statistic.squared_delta / static_cast<double>(statistic.count - 1) : 0.0;
+            double deviation = std::abs(values[i] - statistic.mean);
+            double standardized = variance > 0.0 ? deviation / std::sqrt(variance) : (deviation >= minimum_change[i] ? 4.0 : 0.0);
+            if (deviation >= minimum_change[i] && standardized > strongest) {
+                strongest = standardized; signal.feature = names[i]; signal.observed = values[i]; signal.baseline = statistic.mean; signal.standardized_deviation = standardized;
+            }
+        }
+        signal.anomaly_score = static_cast<int>(std::min(100.0, std::round(strongest * 20.0)));
+        signal.anomalous = strongest >= 3.0;
+    }
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        auto& statistic = statistics_[i]; ++statistic.count; double delta = values[i] - statistic.mean; statistic.mean += delta / static_cast<double>(statistic.count); statistic.squared_delta += delta * (values[i] - statistic.mean);
+    }
+    ++observations_; return signal;
+}
+
+void BehaviorBaseline::reset() noexcept { statistics_ = {}; observations_ = 0; }
+
+void add_behavior_advisory(Assessment& assessment, const BehavioralSignal& signal) {
+    if (!signal.warmed_up || !signal.anomalous) return;
+    std::ostringstream evidence; evidence << signal.feature << " observed=" << std::fixed << std::setprecision(1) << signal.observed << ", baseline=" << signal.baseline << ", deviation=" << signal.standardized_deviation << " sigma, samples=" << signal.observations;
+    assessment.findings.push_back({"AS-BEH-001", "behavior", "Behavior differs materially from the local session baseline", evidence.str(), "Review the access change and deterministic evidence; this advisory never changes policy enforcement.", signal.anomaly_score >= 80 ? Severity::high : Severity::medium, 0, true});
+}
+
 std::vector<ExposureChange> detect_changes(const Assessment& previous, const Assessment& current) {
     std::map<std::string, ExposureChange> before, after;
     auto credential_entries=[](const Assessment& assessment, std::map<std::string,ExposureChange>& entries){
@@ -185,7 +228,7 @@ std::string to_json(const Assessment& a, long long timestamp_ms, Privacy privacy
     o << "],\"resources\":[";
     for(size_t i=0;i<a.snapshot.resource_count;++i){if(i)o<<',';const auto& r=a.snapshot.resources[i];o<<"{\"kind\":\""<<as_resource_kind_name(r.kind)<<"\",\"identifier\":\""<<escape(private_resource(r,privacy))<<"\",\"severity\":\""<<severity_name(severity_from(r.risk))<<"\",\"network\":{";if(r.kind==AS_RESOURCE_SOCKET&&privacy!=Privacy::strict)o<<"\"attributed\":"<<(r.network_protocol[0]?"true":"false")<<",\"protocol\":\""<<escape(r.network_protocol)<<"\",\"localEndpoint\":\""<<escape(r.local_endpoint)<<"\",\"remoteEndpoint\":\""<<escape(r.remote_endpoint)<<"\",\"state\":\""<<escape(r.connection_state)<<"\"";else o<<"\"attributed\":false";o<<"}}";}
     o << "],\"findings\":[";
-    for(size_t i=0;i<a.findings.size();++i){if(i)o<<',';const auto& f=a.findings[i];std::string evidence=privacy==Privacy::strict&&f.category=="credential"?"[credential name redacted]":privacy==Privacy::strict&&(f.category=="filesystem"||f.category=="network")?"[resource identifier redacted]":f.evidence;o<<"{\"ruleId\":\""<<f.rule_id<<"\",\"category\":\""<<f.category<<"\",\"severity\":\""<<severity_name(f.severity)<<"\",\"score\":"<<f.score<<",\"title\":\""<<escape(f.title)<<"\",\"evidence\":\""<<escape(evidence)<<"\",\"recommendation\":\""<<escape(f.recommendation)<<"\"}";}
+    for(size_t i=0;i<a.findings.size();++i){if(i)o<<',';const auto& f=a.findings[i];std::string evidence=privacy==Privacy::strict&&f.category=="credential"?"[credential name redacted]":privacy==Privacy::strict&&(f.category=="filesystem"||f.category=="network")?"[resource identifier redacted]":f.evidence;o<<"{\"ruleId\":\""<<f.rule_id<<"\",\"category\":\""<<f.category<<"\",\"severity\":\""<<severity_name(f.severity)<<"\",\"score\":"<<f.score<<",\"advisory\":"<<(f.advisory?"true":"false")<<",\"title\":\""<<escape(f.title)<<"\",\"evidence\":\""<<escape(evidence)<<"\",\"recommendation\":\""<<escape(f.recommendation)<<"\"}";}
     o << "],\"changes\":[";
     for(size_t i=0;i<changes.size();++i){if(i)o<<',';const auto& c=changes[i];o<<"{\"direction\":\""<<direction_name(c.direction)<<"\",\"category\":\""<<escape(c.category)<<"\",\"severity\":\""<<severity_name(c.severity)<<"\",\"attention\":"<<(c.attention?"true":"false")<<",\"identifier\":\""<<escape(private_change_identifier(c,privacy))<<"\"}";}
     o << "],\"policy\":{";

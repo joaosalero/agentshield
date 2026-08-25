@@ -166,6 +166,33 @@ int main() {
     assert(unknown.level == agentshield::Severity::critical);
     assert(unknown.findings.size() == 3);
 
+    agentshield::BehaviorBaseline behavior;
+    agentshield::BehavioralSignal signal;
+    assert(behavior.observe(unknown).observations == 0);
+    for (int sample = 0; sample < 5; ++sample) signal = behavior.observe(agentshield::assess(baseline));
+    assert(!signal.warmed_up && !signal.anomalous);
+    as_snapshot behavioral_surge = baseline;
+    behavioral_surge.credential_count = 3;
+    for (std::size_t i = 0; i < behavioral_surge.credential_count; ++i) {
+        std::strcpy(behavioral_surge.credentials[i].name, i == 0 ? "SYNTHETIC_ALPHA" : i == 1 ? "SYNTHETIC_BETA" : "SYNTHETIC_GAMMA");
+        behavioral_surge.credentials[i].risk = 1;
+    }
+    auto behavioral_assessment = agentshield::assess(behavioral_surge);
+    int deterministic_score = behavioral_assessment.risk_score;
+    signal = behavior.observe(behavioral_assessment);
+    assert(signal.warmed_up && signal.anomalous && signal.anomaly_score >= 60);
+    assert(signal.feature == "credential count" && signal.observations == 6);
+    agentshield::add_behavior_advisory(behavioral_assessment, signal);
+    assert(behavioral_assessment.risk_score == deterministic_score);
+    assert(behavioral_assessment.findings.back().advisory && behavioral_assessment.findings.back().score == 0);
+    auto behavioral_json = agentshield::to_json(behavioral_assessment, 5, agentshield::Privacy::strict);
+    assert(behavioral_json.find("\"advisory\":true") != std::string::npos);
+    assert(behavioral_json.find("SYNTHETIC_ALPHA") == std::string::npos);
+    auto advisory_policy = policy; advisory_policy.default_credential = agentshield::PolicyAction::allow; advisory_policy.max_risk_score = deterministic_score;
+    assert(!agentshield::evaluate_policy(behavioral_assessment, advisory_policy).blocked);
+    behavior.reset();
+    assert(!behavior.observe(agentshield::assess(baseline)).warmed_up);
+
     assert(agentshield::sha256_hex("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     agentshield::AuditKey audit_key{};
     std::fill(audit_key.begin(), audit_key.begin() + 20, 0x0b);
