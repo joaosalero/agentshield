@@ -40,6 +40,7 @@ public final class DesktopAppTest {
         if(demo.size()<8||demo.stream().noneMatch(event->event.startsWith("POLICY\tDENY")))throw new AssertionError("guided demo scenario is incomplete");
         String demoPayload=String.join("\n",demo);
         if(!demoPayload.contains("example.invalid")||demoPayload.contains("OPENAI_API_KEY")||demoPayload.contains("AKIA"))throw new AssertionError("demo safety contract changed");
+        if(DesktopApp.demoNarration().size()!=demo.size()||DesktopApp.demoNarration().stream().anyMatch(String::isBlank))throw new AssertionError("demo guidance must explain every event");
         System.out.println("desktop behavior contracts: OK");
     }
 }

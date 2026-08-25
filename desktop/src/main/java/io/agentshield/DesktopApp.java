@@ -107,7 +107,9 @@ public final class DesktopApp extends JFrame {
         RoundedPanel card = new RoundedPanel(Color.WHITE, 20); card.setLayout(new BorderLayout()); card.setBorder(new EmptyBorder(18, 20, 16, 20));
         JPanel heading = transparent(new BorderLayout()); JPanel copy = transparent(); copy.setLayout(new BoxLayout(copy, BoxLayout.Y_AXIS)); copy.add(title(name, 17)); copy.add(label(description, MUTED, 12)); heading.add(copy); heading.add(new Badge("LIVE DATA"), BorderLayout.EAST); card.add(heading, BorderLayout.NORTH);
         JTable table = new JTable(source); table.setFont(UI); table.setForeground(INK); table.setBackground(Color.WHITE); table.setGridColor(new Color(238, 242, 247)); table.setRowHeight(38); table.setIntercellSpacing(new Dimension(0, 1)); table.setShowVerticalLines(false); table.setAutoCreateRowSorter(true); table.setFillsViewportHeight(true); table.setDefaultRenderer(Object.class, new RiskRenderer()); table.getTableHeader().setFont(UI.deriveFont(Font.BOLD, 10f)); table.getTableHeader().setForeground(MUTED); table.getTableHeader().setBackground(new Color(248, 250, 253)); table.getTableHeader().setPreferredSize(new Dimension(0, 34)); table.getAccessibleContext().setAccessibleDescription(description);
-        JScrollPane scroll = new JScrollPane(table); scroll.setBorder(new EmptyBorder(14, 0, 0, 0)); scroll.getViewport().setBackground(Color.WHITE); card.add(scroll); return card;
+        JScrollPane scroll = new JScrollPane(table); scroll.setBorder(new EmptyBorder(14, 0, 0, 0)); scroll.getViewport().setBackground(Color.WHITE);
+        JPanel empty = transparent(new GridBagLayout()); JPanel emptyCopy = transparent(); emptyCopy.setLayout(new BoxLayout(emptyCopy, BoxLayout.Y_AXIS)); JLabel emptyTitle = title("No observed data yet", 18); emptyTitle.setAlignmentX(Component.CENTER_ALIGNMENT); JLabel emptyHint = label("Enter an agent PID to monitor live, or launch the safe Demo Lab.", MUTED, 13); emptyHint.setAlignmentX(Component.CENTER_ALIGNMENT); emptyCopy.add(emptyTitle); emptyCopy.add(Box.createVerticalStrut(8)); emptyCopy.add(emptyHint); empty.add(emptyCopy);
+        CardLayout contentLayout = new CardLayout(); JPanel content = new JPanel(contentLayout); content.setOpaque(false); content.add(empty, "empty"); content.add(scroll, "data"); source.addTableModelListener(e -> contentLayout.show(content, source.getRowCount() == 0 ? "empty" : "data")); contentLayout.show(content, source.getRowCount() == 0 ? "empty" : "data"); card.add(content); return card;
     }
 
     private JPanel controlCenter() {
@@ -140,6 +142,18 @@ public final class DesktopApp extends JFrame {
         "CHANGE\t{TIME}\tREVOKED\tLOW\tnetwork\thttps://example.invalid/api\tRESOLVED"
     ); }
 
+    static List<String> demoNarration() { return List.of(
+        "A sandboxed demo agent establishes a low-risk baseline.",
+        "A credential name becomes visible; its value is never created or collected.",
+        "The agent opens a harmless temporary demo file.",
+        "AgentShield correlates the exposure with an explainable high-severity rule.",
+        "A new outbound access grant changes the agent's behavior profile.",
+        "The simulated connection is attributed without contacting any real service.",
+        "Policy requires explicit human approval for external network access.",
+        "A prohibited administrative credential request is blocked deterministically.",
+        "The risky access is revoked and the scenario is contained."
+    ); }
+
     private void startDemo() {
         if (monitor != null) { JOptionPane.showMessageDialog(this, "Stop live monitoring before launching the Demo Lab."); return; }
         credentials.setRowCount(0); resources.setRowCount(0); findings.setRowCount(0); policy.setRowCount(0); activity.setRowCount(0);
@@ -148,8 +162,9 @@ public final class DesktopApp extends JFrame {
         var events = demoEvents(); final int[] index = {0};
         javax.swing.Timer timer = new javax.swing.Timer(850, null);
         timer.addActionListener(e -> {
-            if (index[0] >= events.size()) { timer.stop(); demo.setEnabled(true); start.setEnabled(true); status.setState("DEMO COMPLETE  •  THREAT CONTAINED", new Color(22, 139, 118), false); return; }
-            String event = events.get(index[0]++).replace("{TIME}", String.valueOf(System.currentTimeMillis()));
+            if (index[0] >= events.size()) { timer.stop(); demo.setEnabled(true); start.setEnabled(true); status.setState("DEMO COMPLETE  •  THREAT CONTAINED", new Color(22, 139, 118), false); identity.setText("SIMULATION COMPLETE  •  Evidence remained local  •  No real credentials, files, or connections were used"); return; }
+            int step = index[0]; String event = events.get(index[0]++).replace("{TIME}", String.valueOf(System.currentTimeMillis()));
+            identity.setText("SIMULATION  •  Step " + (step + 1) + " of " + events.size() + "  •  " + demoNarration().get(step));
             handle(event);
         });
         timer.setInitialDelay(250); timer.start();
