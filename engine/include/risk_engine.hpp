@@ -54,4 +54,5 @@ PolicyEvaluation evaluate_policy(const Assessment& assessment, const Policy& pol
 std::string severity_name(Severity severity);
 std::string to_json(const Assessment& assessment, long long timestamp_ms, Privacy privacy = Privacy::standard, const std::vector<ExposureChange>& changes = {}, const PolicyEvaluation* policy = nullptr);
 std::string to_tsv(const Assessment& assessment, long long timestamp_ms, Privacy privacy = Privacy::standard, const std::vector<ExposureChange>& changes = {}, const PolicyEvaluation* policy = nullptr);
+std::string to_prometheus(const Assessment& assessment, const std::vector<ExposureChange>& changes = {}, const PolicyEvaluation* policy = nullptr);
 }

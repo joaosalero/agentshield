@@ -13,7 +13,7 @@ LDLIBS := -lcrypto
 BUILD := build
 PREFIX ?= /usr/local
 OBJECTS := $(BUILD)/sensor.o $(BUILD)/risk_engine.o $(BUILD)/audit_log.o $(BUILD)/main.o
-.PHONY: all check-version test portfolio-check soak cgroup-test-required sanitize java java-test jar sbom provenance dist verify-dist deterministic-package deb verify-deb install uninstall run-gui clean
+.PHONY: all check-version test portfolio-check fuzz-smoke soak cgroup-test-required sanitize java java-test jar sbom provenance dist verify-dist deterministic-package deb verify-deb install uninstall run-gui clean
 all: check-version $(BUILD)/agentshield
 check-version:
 	printf '%s\n' '$(VERSION)' | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$'
@@ -42,6 +42,9 @@ test: all $(BUILD)/test_risk $(BUILD)/test_behavior_eval
 	bash tests/test_cgroup.sh ./$(BUILD)/agentshield
 portfolio-check:
 	python3 scripts/validate_portfolio.py
+fuzz-smoke: $(BUILD)/sensor.o
+	$(CXX) $(CPPFLAGS) -O1 -g -std=c++17 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,undefined tests/fuzz_parsers.cpp engine/src/risk_engine.cpp engine/src/audit_log.cpp $(BUILD)/sensor.o $(LDLIBS) -o $(BUILD)/fuzz_parsers
+	./$(BUILD)/fuzz_parsers
 soak: all
 	AGENTSHIELD_SOAK_SECONDS=$${AGENTSHIELD_SOAK_SECONDS:-10} bash tests/test_soak.sh ./$(BUILD)/agentshield
 cgroup-test-required: all

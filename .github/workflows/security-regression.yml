@@ -1,0 +1,21 @@
+name: Security regression
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 1 * *'
+permissions:
+  contents: read
+concurrency:
+  group: security-regression-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  parsers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - run: make sanitize
+      - run: make fuzz-smoke
+      - run: make portfolio-check

@@ -1,5 +1,6 @@
 name: CI
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -24,6 +25,7 @@ jobs:
       - run: make test
       - run: AGENTSHIELD_SOAK_SECONDS=5 make soak
       - run: make sanitize
+      - run: make fuzz-smoke
   desktop:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -53,9 +55,9 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-      - uses: github/codeql-action/init@f3712979fa5f215279b101dd0a2e3bdfb4353324 # v3
+      - uses: github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
         with:
           languages: c-cpp,java-kotlin
           build-mode: manual
       - run: make clean all java
-      - uses: github/codeql-action/analyze@f3712979fa5f215279b101dd0a2e3bdfb4353324 # v3
+      - uses: github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0

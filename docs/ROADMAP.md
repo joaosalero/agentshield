@@ -11,11 +11,14 @@
 
 ## Enterprise foundation
 
+- delivered: versioned readiness diagnostics and privacy-safe aggregate metrics
+- delivered: deterministic sanitizer-backed mutation testing for security parsers
+- delivered: content-addressed policy pinning for authenticated delivery channels
 - eBPF event collection for short-lived filesystem, process, and network activity
 - signed policy bundles and externally anchored audit receipts
 - stable configuration migration and signed update/rollback channel
 - performance, soak, fuzzing, and representative behavioral evaluation corpora
-- operational metrics, health diagnostics, alert routing, and support runbooks
+- centralized alert routing, operational SLOs, and environment-specific runbooks
 
 ## Multi-platform and centralized operations
 

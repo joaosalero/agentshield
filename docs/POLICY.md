@@ -11,6 +11,21 @@ owned by the current user or root, no larger than 64 KiB, and not writable by
 group or other users. Unknown directives, duplicate singleton settings,
 unsupported versions, invalid values, and oversized lines fail closed.
 
+For automated rollout, pin the exact content delivered through the trusted
+control plane:
+
+```bash
+digest=$(sha256sum /etc/agentshield/baseline.policy | awk '{print $1}')
+agentshield run --policy /etc/agentshield/baseline.policy \
+  --policy-sha256 "$digest" -- python3 agent.py
+```
+
+`--policy-sha256` accepts exactly 64 lowercase hexadecimal characters and uses
+a constant-time comparison. A missing policy or digest mismatch fails before
+the supervised command starts. The digest must arrive through an independently
+authenticated channel; content addressing detects substitution but does not
+identify the policy publisher. Signed policy bundles remain a roadmap item.
+
 ## Directives
 
 ```text

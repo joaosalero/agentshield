@@ -26,6 +26,7 @@ REQUIRED_FILES = {
     Path("SUPPORT.md"),
     Path("docs/PORTFOLIO_CASE_STUDY.md"),
     Path("docs/ROADMAP.md"),
+    Path("docs/OPERATIONS.md"),
     Path("docs/assets/architecture.svg"),
     Path(".github/PULL_REQUEST_TEMPLATE.md"),
     Path(".github/ISSUE_TEMPLATE/bug_report.yml"),
