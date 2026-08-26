@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+set -eu
+bindir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+prefix=$(CDPATH= cd -- "$bindir/.." && pwd)
+jar="$prefix/lib/agentshield/agentshield-desktop.jar"
+native="$prefix/bin/agentshield"
+if ! command -v java >/dev/null 2>&1; then
+  echo "AgentShield Desktop requires Java 17 or newer." >&2
+  exit 1
+fi
+if [ ! -r "$jar" ] || [ ! -x "$native" ]; then
+  echo "AgentShield installation is incomplete." >&2
+  exit 1
+fi
+exec java -jar "$jar" "$native"

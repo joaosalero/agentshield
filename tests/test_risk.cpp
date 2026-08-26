@@ -1,7 +1,10 @@
+#include "audit_log.hpp"
 #include "risk_engine.hpp"
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 #include <iostream>
+#include <sstream>
 
 int main() {
     as_snapshot snapshot{};
@@ -83,11 +86,139 @@ int main() {
     assert(privilege_removed.size() == 3);
     assert(!privilege_removed[0].attention);
 
+    std::istringstream policy_text(
+        "version 1\nmode enforce\nrequire-full-coverage true\nallow-root false\n"
+        "allow-capabilities false\nmax-risk-score 100\n"
+        "default credential approval\ndefault sensitive-file approval\ndefault network allow\n");
+    auto policy = agentshield::parse_policy(policy_text);
+    auto policy_blocked = agentshield::evaluate_policy(assessment, policy);
+    assert(policy_blocked.blocked && policy_blocked.decisions.size() == 2);
+    std::set<std::string> approvals{"credential:SYNTHETIC_DEMO_TOKEN_NAME", "filesystem:/tmp/file\tFINDING\tforged"};
+    auto policy_approved = agentshield::evaluate_policy(assessment, policy, approvals);
+    assert(!policy_approved.blocked && policy_approved.decisions.size() == 2);
+    for (const auto& decision : policy_approved.decisions) assert(decision.approved && !decision.blocking);
+    auto strict_policy_json = agentshield::to_json(assessment, 3, agentshield::Privacy::strict, {}, &policy_blocked);
+    assert(strict_policy_json.find("SYNTHETIC_DEMO_TOKEN_NAME") == std::string::npos);
+    assert(strict_policy_json.find("/tmp/file") == std::string::npos);
+    auto strict_policy_tsv = agentshield::to_tsv(assessment, 3, agentshield::Privacy::strict, {}, &policy_blocked);
+    assert(strict_policy_tsv.find("SYNTHETIC_DEMO_TOKEN_NAME") == std::string::npos);
+    assert(strict_policy_tsv.find("/tmp/file") == std::string::npos);
+    assert(strict_policy_tsv.find("\tFINDING\tforged") == std::string::npos);
+
+    std::istringstream deny_text(
+        "version 1\nmode enforce\nrequire-full-coverage true\nallow-root false\n"
+        "allow-capabilities false\nmax-risk-score 100\ndefault credential allow\n"
+        "default sensitive-file allow\ndefault network allow\ncredential SYNTHETIC_DEMO_TOKEN_NAME deny\n");
+    auto deny_policy = agentshield::parse_policy(deny_text);
+    auto denied = agentshield::evaluate_policy(assessment, deny_policy, approvals);
+    assert(denied.blocked && denied.decisions.size() == 1 && !denied.decisions[0].approved);
+
+    auto expect_invalid=[](const std::string& text){bool invalid=false;try{std::istringstream input(text);(void)agentshield::parse_policy(input);}catch(const std::invalid_argument&){invalid=true;}assert(invalid);};
+    expect_invalid("version 2\n");
+    expect_invalid("mode audit\n");
+    expect_invalid("version 1\nunknown value\n");
+    expect_invalid("version 1\nmode audit\nmode enforce\n");
+    expect_invalid("version 1\nallow-root maybe\n");
+    expect_invalid("version 1\nresource-prefix relative allow\n");
+    expect_invalid("version 1\n#"+std::string(5000,'x')+"\n");
+
+    auto restrictive=policy;
+    as_snapshot no_coverage=baseline;no_coverage.coverage=0;
+    assert(agentshield::evaluate_policy(agentshield::assess(no_coverage),restrictive).blocked);
+    as_snapshot root_snapshot=baseline;root_snapshot.effective_uid=0;
+    assert(agentshield::evaluate_policy(agentshield::assess(root_snapshot),restrictive).blocked);
+    as_snapshot caps_snapshot=baseline;caps_snapshot.effective_capabilities=1;
+    assert(agentshield::evaluate_policy(agentshield::assess(caps_snapshot),restrictive).blocked);
+    restrictive.max_risk_score=39;
+    assert(agentshield::evaluate_policy(assessment,restrictive,approvals).blocked);
+
+    std::istringstream prefix_text(
+        "version 1\nmode enforce\nrequire-full-coverage true\nallow-root false\n"
+        "allow-capabilities false\nmax-risk-score 100\ndefault credential allow\n"
+        "default sensitive-file approval\ndefault network approval\n"
+        "resource-prefix /tmp/ allow\nresource-prefix /tmp/file deny\n");
+    auto prefix_policy=agentshield::parse_policy(prefix_text);
+    auto prefix_denied=agentshield::evaluate_policy(assessment,prefix_policy,approvals);
+    assert(prefix_denied.blocked&&prefix_denied.decisions.size()==1&&prefix_denied.decisions[0].action==agentshield::PolicyAction::deny);
+
+    as_snapshot socket_snapshot=baseline;socket_snapshot.resource_count=1;std::strcpy(socket_snapshot.resources[0].path,"tcp://203.0.113.8:443");socket_snapshot.resources[0].kind=AS_RESOURCE_SOCKET;socket_snapshot.resources[0].risk=2;std::strcpy(socket_snapshot.resources[0].network_protocol,"tcp");std::strcpy(socket_snapshot.resources[0].local_endpoint,"192.0.2.4:42000");std::strcpy(socket_snapshot.resources[0].remote_endpoint,"203.0.113.8:443");std::strcpy(socket_snapshot.resources[0].connection_state,"ESTABLISHED");
+    auto socket_json=agentshield::to_json(agentshield::assess(socket_snapshot),4);
+    assert(socket_json.find("\"attributed\":true")!=std::string::npos&&socket_json.find("203.0.113.8:443")!=std::string::npos);
+    auto strict_socket_json=agentshield::to_json(agentshield::assess(socket_snapshot),4,agentshield::Privacy::strict);
+    assert(strict_socket_json.find("203.0.113.8") == std::string::npos && strict_socket_json.find("192.0.2.4") == std::string::npos);
+    auto network_policy=policy;network_policy.default_network=agentshield::PolicyAction::approval;
+    auto network_approved=agentshield::evaluate_policy(agentshield::assess(socket_snapshot),network_policy,{"network:*"});
+    assert(!network_approved.blocked&&network_approved.decisions.size()==1&&network_approved.decisions[0].approved);
+    std::istringstream network_prefix_text(
+        "version 1\nmode enforce\nrequire-full-coverage true\nallow-root false\n"
+        "allow-capabilities false\nmax-risk-score 100\ndefault credential allow\n"
+        "default sensitive-file allow\ndefault network deny\nnetwork-endpoint tcp://203.0.113.8:443 allow\n");
+    auto exact_network_policy=agentshield::parse_policy(network_prefix_text);
+    assert(!agentshield::evaluate_policy(agentshield::assess(socket_snapshot),exact_network_policy).blocked);
+    std::strcpy(socket_snapshot.resources[0].path,"tcp://203.0.113.8:4430");
+    assert(agentshield::evaluate_policy(agentshield::assess(socket_snapshot),exact_network_policy).blocked);
+    expect_invalid("version 1\nnetwork-prefix https://example.invalid deny\n");
+
     as_snapshot incomplete{};
     incomplete.pid = 43;
     auto unknown = agentshield::assess(incomplete);
     assert(unknown.risk_score == 75);
     assert(unknown.level == agentshield::Severity::critical);
     assert(unknown.findings.size() == 3);
+
+    agentshield::BehaviorBaseline behavior;
+    agentshield::BehavioralSignal signal;
+    assert(behavior.observe(unknown).observations == 0);
+    for (int sample = 0; sample < 5; ++sample) signal = behavior.observe(agentshield::assess(baseline));
+    assert(!signal.warmed_up && !signal.anomalous);
+    as_snapshot behavioral_surge = baseline;
+    behavioral_surge.credential_count = 3;
+    for (std::size_t i = 0; i < behavioral_surge.credential_count; ++i) {
+        std::strcpy(behavioral_surge.credentials[i].name, i == 0 ? "SYNTHETIC_ALPHA" : i == 1 ? "SYNTHETIC_BETA" : "SYNTHETIC_GAMMA");
+        behavioral_surge.credentials[i].risk = 1;
+    }
+    auto behavioral_assessment = agentshield::assess(behavioral_surge);
+    int deterministic_score = behavioral_assessment.risk_score;
+    signal = behavior.observe(behavioral_assessment);
+    assert(signal.warmed_up && signal.anomalous && signal.anomaly_score >= 60);
+    assert(signal.feature == "credential count" && signal.observations == 6);
+    agentshield::add_behavior_advisory(behavioral_assessment, signal);
+    assert(behavioral_assessment.risk_score == deterministic_score);
+    assert(behavioral_assessment.findings.back().advisory && behavioral_assessment.findings.back().score == 0);
+    auto behavioral_json = agentshield::to_json(behavioral_assessment, 5, agentshield::Privacy::strict);
+    assert(behavioral_json.find("\"advisory\":true") != std::string::npos);
+    assert(behavioral_json.find("SYNTHETIC_ALPHA") == std::string::npos);
+    auto advisory_policy = policy; advisory_policy.default_credential = agentshield::PolicyAction::allow; advisory_policy.max_risk_score = deterministic_score;
+    assert(!agentshield::evaluate_policy(behavioral_assessment, advisory_policy).blocked);
+    behavior.reset();
+    assert(!behavior.observe(agentshield::assess(baseline)).warmed_up);
+
+    assert(agentshield::sha256_hex("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    agentshield::AuditKey audit_key{};
+    std::fill(audit_key.begin(), audit_key.begin() + 20, 0x0b);
+    assert(agentshield::hmac_sha256_hex(audit_key, "Hi There") == "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7");
+    agentshield::AuditRecord first{1, 10, std::string(64, '0'), "", "{}", ""};
+    std::string first_line = agentshield::encode_audit_record(first, audit_key);
+    auto decoded_first = agentshield::decode_audit_record(first_line.substr(0, first_line.size() - 1));
+    agentshield::AuditRecord second{2, 11, decoded_first.mac, "", "{\"event\":2}\n", ""};
+    std::string chain = first_line + agentshield::encode_audit_record(second, audit_key);
+    std::istringstream audit_input(chain);
+    std::vector<agentshield::AuditRecord> audit_records;
+    auto verified = agentshield::verify_audit_stream(audit_input, audit_key, &audit_records);
+    assert(verified.records == 2 && verified.final_mac == audit_records[1].mac);
+    assert(agentshield::helix_export_json(audit_records[0]).find("io.helix-sentinel.agentshield/v1") != std::string::npos);
+    std::string noncanonical = first_line;
+    auto padded = noncanonical.find("e30=");
+    assert(padded != std::string::npos);
+    noncanonical[padded + 2] = '1';
+    bool padding_rejected = false;
+    try { (void)agentshield::decode_audit_record(noncanonical.substr(0, noncanonical.size() - 1)); }
+    catch (const std::invalid_argument&) { padding_rejected = true; }
+    assert(padding_rejected);
+    bool tamper_rejected = false;
+    chain[chain.find("eventBase64") + 14] = chain[chain.find("eventBase64") + 14] == 'A' ? 'B' : 'A';
+    try { std::istringstream tampered(chain); (void)agentshield::verify_audit_stream(tampered, audit_key); }
+    catch (const std::invalid_argument&) { tamper_rejected = true; }
+    assert(tamper_rejected);
     std::cout << "risk engine: OK\n";
 }

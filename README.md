@@ -13,25 +13,37 @@ findings in a live desktop dashboard or machine-readable event stream.
 > Linux/WSL preview. AgentShield is an observability control, not a complete
 > sandbox. It does not claim to block every operating-system action.
 
+Build requirements are a C11 compiler, a C++17 compiler, Python 3, OpenSSL 3
+development headers, and JDK 17 for the optional desktop dashboard.
+
 ## Capabilities
 
 - Live inventory of credential-like environment variable **names**
 - Credential values are discarded while parsing and are never retained or emitted
 - Effective UID and Linux capability detection
 - Sensitive open-file and network-socket visibility
+- TCP/UDP IPv4/IPv6 endpoint and connection-state attribution
 - Explainable rules with severity, evidence, score, and remediation
 - Access-drift detection for newly granted or revoked credentials, sensitive files,
   sockets, privileges, and monitoring coverage
 - A bounded live access timeline that calls attention to dangerous new grants
+- Versioned allow/deny/approval policies with fail-closed supervised enforcement
+- Launch-scoped approvals that are never persisted
 - Point-in-time inspection, continuous monitoring, or supervised command launch
-- JSON Lines contract designed for SIEM ingestion and future Helix Sentinel use
-- Java Swing dashboard with live credential and finding tables
+- Authenticated HMAC-SHA-256 audit chain with offline verification
+- Verified `io.helix-sentinel.agentshield/v1` JSONL export without network transmission
+- Modern Java Swing security console with live exposure metrics, risk-aware tables,
+  policy decisions, access timeline, and privacy-first monitoring controls
+- Guided Demo Lab with progressive, clearly labelled synthetic security events
+- In-memory behavioral anomaly baseline with explainable advisory findings
 - Strict privacy mode for shared telemetry and demonstrations
-- Owner-only local JSONL audit files with final-component symlink rejection
+- Owner-only audit keys/logs, append pre-verification, and fail-closed size retention
 - Secure supervised execution with `no_new_privs`, no core dumps, descriptor
   isolation, process groups, and optional CPU/memory/process limits
+- Optional delegated cgroup v2 tree limits and reliable descendant termination
 - Read-only `/proc` sensor written in C and policy engine written in C++17
 - Unit, integration, redaction, sanitizer, CMake, and CI validation
+- Deterministic Linux packaging, CycloneDX source inventory, in-toto build metadata, and CPack packages
 
 ## Architecture
 
@@ -49,11 +61,21 @@ event contract can be consumed by another UI or a security platform.
 ```bash
 make
 ./build/agentshield inspect $$
+./build/agentshield --version
 ./build/agentshield watch 12345 --interval 1000
 ./build/agentshield run -- python3 your_agent.py
 ./build/agentshield run --privacy strict --max-memory-mb 2048 \
   --max-cpu-seconds 600 -- python3 your_agent.py
-./build/agentshield watch 12345 --privacy strict --audit audit.jsonl
+systemd-run --user --wait --collect --pipe -p Delegate=yes \
+  ./build/agentshield run --cgroup --max-memory-mb 2048 \
+  --max-processes 128 --max-cpu-percent 200 -- python3 your_agent.py
+./build/agentshield run --policy policies/baseline.policy \
+  --approve credential:MY_SCOPED_TOKEN -- python3 your_agent.py
+./build/agentshield audit init-key audit.key
+./build/agentshield watch 12345 --privacy strict \
+  --audit audit.jsonl --audit-key audit.key
+./build/agentshield audit verify audit.jsonl --audit-key audit.key
+./build/agentshield audit export audit.jsonl --audit-key audit.key > helix.jsonl
 ```
 
 Desktop dashboard (JDK 17+):
@@ -63,6 +85,24 @@ make java
 make run-gui
 ```
 
+Choose **Launch Demo Lab** to see a complete credential, resource, policy, and
+containment scenario. The lab uses no real secrets, personal files, or external
+connections and never mixes synthetic events with a protected audit log.
+
+Installable Debian package:
+
+```bash
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release --parallel
+cpack --config build-release/CPackConfig.cmake -G DEB
+sudo apt install ./agentshield_*.deb
+```
+
+The installer registers AgentShield in the application menu with its own icon.
+Uninstall with `sudo apt remove agentshield`; user-created audits and policies are
+preserved. See the [AI and data-science strategy](docs/AI_AND_DATA_SCIENCE.md) for
+the optional, privacy-preserving advisory layer.
+
 Alternative CMake build:
 
 ```bash
@@ -70,6 +110,10 @@ cmake -S . -B build-cmake
 cmake --build build-cmake
 ctest --test-dir build-cmake --output-on-failure
 ```
+
+Release-grade Linux containment validation requires a delegated user service
+manager and must run `make cgroup-test-required`; see the
+[validation evidence](docs/VALIDATION.md).
 
 ## Event model
 
@@ -81,6 +125,8 @@ Each JSON line follows the backward-compatible `io.agentshield.snapshot/v1` cont
 - normalized findings and a bounded 0–100 risk score.
 - a `changes` array describing grants and revocations since the preceding
   successful snapshot; the first snapshot establishes the in-memory baseline.
+- an optional `policy` object containing normalized decisions, approval state,
+  and whether supervised execution was blocked.
 
 Change events contain direction, category, severity, a privacy-filtered
 identifier, and an `attention` flag. A lost observability surface is treated as
@@ -94,21 +140,24 @@ Reports may expose local paths and should be handled as security telemetry.
 The dashboard presents **observed exposure**, not a complete inventory of every
 permission or credential available through external brokers. The preview monitors processes owned by the current user. Linux may restrict
 inspection through `ptrace_scope`, containers, user namespaces, or `/proc`
-mount options. Socket identifiers show that network access exists but do not yet
-resolve every inode to a remote endpoint. Environment variables can change
+mount options. TCP/UDP sockets are attributed through the process network
+namespace when kernel tables are readable; Unix sockets and restricted or
+short-lived connections may remain inode-only. Environment variables can change
 between snapshots, and a compromised kernel is outside the trust boundary.
 
-See [the security architecture](docs/SECURITY_ARCHITECTURE.md),
+See [the policy guide](docs/POLICY.md), [authenticated audit guide](docs/AUDIT.md), [the security architecture](docs/SECURITY_ARCHITECTURE.md),
 [privacy guide](docs/PRIVACY.md), [threat model](docs/THREAT_MODEL.md), and
-[security policy](SECURITY.md).
+[distribution guide](docs/DISTRIBUTION.md), [platform support matrix](docs/PLATFORM_SUPPORT.md),
+and [security policy](SECURITY.md).
+Behavioral analytics and its non-enforcement boundary are documented in the
+[local anomaly analytics guide](docs/BEHAVIOR_ANALYTICS.md).
 
 ## Roadmap
 
-- eBPF event sensor for file, process, and network activity
-- enforceable allow/deny/approval policy mode
+- eBPF event sensor for loss-resistant file, process, and network activity
 - Windows ETW and macOS Endpoint Security adapters
-- signed policy bundles and tamper-evident audit chains
-- native Helix Sentinel ingestion adapter
+- signed policy bundles and externally anchored audit receipts
+- native Helix Sentinel transport adapter with mutual authentication
 
 ## License
 

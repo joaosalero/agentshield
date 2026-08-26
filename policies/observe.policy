@@ -1,0 +1,10 @@
+# Read-only policy for the desktop dashboard and existing-process monitoring.
+version 1
+mode audit
+require-full-coverage true
+allow-root false
+allow-capabilities false
+max-risk-score 74
+default credential approval
+default sensitive-file approval
+default network approval

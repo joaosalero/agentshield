@@ -5,6 +5,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,6 +50,62 @@ static int sensitive_path(const char *path) {
     static const char *patterns[] = {"/.ssh/", "/.aws/", "/.gnupg/", "/.kube/", "/.config/gh/", "/etc/shadow", ".env", "credentials", "id_rsa", "id_ed25519"};
     for (size_t i = 0; i < sizeof patterns / sizeof *patterns; ++i) if (contains_ci(path, patterns[i])) return 1;
     return 0;
+}
+
+static const char *tcp_state(unsigned int state) {
+    static const char *states[] = {"UNKNOWN","ESTABLISHED","SYN_SENT","SYN_RECV","FIN_WAIT1","FIN_WAIT2","TIME_WAIT","CLOSE","CLOSE_WAIT","LAST_ACK","LISTEN","CLOSING","NEW_SYN_RECV"};
+    return state < sizeof states / sizeof *states ? states[state] : "UNKNOWN";
+}
+
+static int decode_endpoint(const char *encoded, int ipv6, char *out, size_t size) {
+    const char *separator = strrchr(encoded, ':');
+    if (!separator || separator == encoded) return -1;
+    unsigned int port = 0;
+    if (sscanf(separator + 1, "%x", &port) != 1 || port > 65535) return -1;
+    char address[INET6_ADDRSTRLEN];
+    if (!ipv6) {
+        if ((size_t)(separator - encoded) != 8) return -1;
+        unsigned int raw = 0;
+        if (sscanf(encoded, "%8x", &raw) != 1) return -1;
+        struct in_addr ipv4 = { .s_addr = raw };
+        if (!inet_ntop(AF_INET, &ipv4, address, sizeof address)) return -1;
+        snprintf(out, size, "%s:%u", address, port);
+        return 0;
+    }
+    if ((size_t)(separator - encoded) != 32) return -1;
+    unsigned char bytes[16];
+    for (size_t word = 0; word < 4; ++word) {
+        unsigned int raw = 0;
+        if (sscanf(encoded + word * 8, "%8x", &raw) != 1) return -1;
+        memcpy(bytes + word * 4, &raw, 4);
+    }
+    if (!inet_ntop(AF_INET6, bytes, address, sizeof address)) return -1;
+    snprintf(out, size, "[%s]:%u", address, port);
+    return 0;
+}
+
+static void apply_socket_table(int pid, const char *table, const char *protocol, int ipv6, int tcp, as_snapshot *snapshot) {
+    char path[64], line[1024];
+    snprintf(path, sizeof path, "/proc/%d/net/%s", pid, table);
+    FILE *file = fopen(path, "r");
+    if (!file) return;
+    if (!fgets(line, sizeof line, file)) { fclose(file); return; }
+    while (fgets(line, sizeof line, file)) {
+        char local[80], remote[80];
+        unsigned int state = 0;
+        unsigned long long inode = 0;
+        int parsed = sscanf(line, " %*u: %79s %79s %2x %*s %*s %*s %*u %*u %llu", local, remote, &state, &inode);
+        if (parsed != 4) continue;
+        for (size_t index = 0; index < snapshot->resource_count; ++index) {
+            as_resource *resource = &snapshot->resources[index];
+            if (resource->kind != AS_RESOURCE_SOCKET || resource->socket_inode != inode || resource->network_protocol[0]) continue;
+            snprintf(resource->network_protocol, sizeof resource->network_protocol, "%s", protocol);
+            if (decode_endpoint(local, ipv6, resource->local_endpoint, sizeof resource->local_endpoint) != 0) resource->local_endpoint[0] = '\0';
+            if (decode_endpoint(remote, ipv6, resource->remote_endpoint, sizeof resource->remote_endpoint) != 0) resource->remote_endpoint[0] = '\0';
+            snprintf(resource->connection_state, sizeof resource->connection_state, "%s", tcp ? tcp_state(state) : state == 7 ? "UNCONNECTED" : "ACTIVE");
+        }
+    }
+    fclose(file);
 }
 
 static int parse_status(int pid, as_snapshot *snapshot) {
@@ -116,6 +173,23 @@ static int parse_environment(int pid, as_snapshot *snapshot) {
     return read_failed ? -1 : 0;
 }
 
+static void parse_cgroup(int pid, as_snapshot *snapshot) {
+    char path[64], line[AS_MAX_PATH + 16];
+    snprintf(path, sizeof path, "/proc/%d/cgroup", pid);
+    FILE *file = fopen(path, "r");
+    if (!file) return;
+    while (fgets(line, sizeof line, file)) {
+        if (strncmp(line, "0::/", 4) != 0) continue;
+        char *value = line + 3;
+        value[strcspn(value, "\r\n")] = '\0';
+        size_t length = strnlen(value, sizeof snapshot->cgroup_path - 1);
+        memcpy(snapshot->cgroup_path, value, length);
+        snapshot->cgroup_path[length] = '\0';
+        break;
+    }
+    fclose(file);
+}
+
 static unsigned long long process_start_time(int pid) {
     char path[64], line[4096];
     snprintf(path, sizeof path, "/proc/%d/stat", pid);
@@ -149,7 +223,8 @@ static int parse_resources(int pid, as_snapshot *snapshot) {
         if (read_link(link_path, target, sizeof target) != 0) continue;
         as_resource_kind kind = AS_RESOURCE_FILE;
         uint8_t risk = 0;
-        if (strncmp(target, "socket:[", 8) == 0) { kind = AS_RESOURCE_SOCKET; risk = 2; }
+        unsigned long long socket_inode = 0;
+        if (sscanf(target, "socket:[%llu]", &socket_inode) == 1) { kind = AS_RESOURCE_SOCKET; risk = 2; }
         else if (strncmp(target, "pipe:[", 6) == 0) kind = AS_RESOURCE_PIPE;
         else if (target[0] != '/') kind = AS_RESOURCE_OTHER;
         else if (sensitive_path(target)) { kind = AS_RESOURCE_SENSITIVE_FILE; risk = 3; }
@@ -159,9 +234,25 @@ static int parse_resources(int pid, as_snapshot *snapshot) {
             snprintf(resource->path, sizeof resource->path, "%s", target);
             resource->kind = kind;
             resource->risk = risk;
+            resource->socket_inode = socket_inode;
         } else ++snapshot->truncated_items;
     }
     closedir(directory);
+    apply_socket_table(pid, "tcp", "tcp", 0, 1, snapshot);
+    apply_socket_table(pid, "tcp6", "tcp6", 1, 1, snapshot);
+    apply_socket_table(pid, "udp", "udp", 0, 0, snapshot);
+    apply_socket_table(pid, "udp6", "udp6", 1, 0, snapshot);
+    for (size_t index = 0; index < snapshot->resource_count; ++index) {
+        as_resource *resource = &snapshot->resources[index];
+        if (resource->kind != AS_RESOURCE_SOCKET || !resource->network_protocol[0]) continue;
+        const char *endpoint = resource->remote_endpoint;
+        if (!endpoint[0] || strcmp(endpoint, "0.0.0.0:0") == 0 || strcmp(endpoint, "[::]:0") == 0) endpoint = resource->local_endpoint;
+        if (endpoint[0]) {
+            char identifier[AS_MAX_PATH];
+            snprintf(identifier, sizeof identifier, "%s://%s", resource->network_protocol, endpoint);
+            snprintf(resource->path, sizeof resource->path, "%s", identifier);
+        }
+    }
     return 0;
 }
 
@@ -176,6 +267,7 @@ int as_collect_snapshot(int pid, as_snapshot *snapshot, char *error, size_t erro
     char path[64];
     snprintf(path, sizeof path, "/proc/%d/exe", pid); read_link(path, snapshot->executable, sizeof snapshot->executable);
     snprintf(path, sizeof path, "/proc/%d/cwd", pid); read_link(path, snapshot->working_directory, sizeof snapshot->working_directory);
+    parse_cgroup(pid, snapshot);
     if (parse_status(pid, snapshot) == 0) snapshot->coverage |= AS_COVERAGE_STATUS;
     if (parse_environment(pid, snapshot) == 0) snapshot->coverage |= AS_COVERAGE_ENVIRONMENT;
     if (parse_resources(pid, snapshot) == 0) snapshot->coverage |= AS_COVERAGE_RESOURCES;

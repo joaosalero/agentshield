@@ -33,20 +33,70 @@ coverage. A failed collection does not replace the last trusted baseline.
 
 The desktop access timeline is bounded to 500 rows to avoid unbounded memory
 growth. It is session-local and is not written unless the operator explicitly
-selects an audit file in the native monitor.
+selects an audit file and matching integrity key in the native monitor.
+
+## Audit trust boundary
+
+Audit events use a versioned envelope and an HMAC-SHA-256 chain backed by the
+reviewed OpenSSL 3 cryptographic provider. The event
+digest binds the exact serialized snapshot, the previous MAC binds ordering,
+and the record MAC authenticates sequence, timestamp, predecessor, digest, and
+event. Existing content must verify before append. Comparisons of authentication
+values use OpenSSL's constant-time comparison. Non-canonical Base64 is rejected
+so alternate textual encodings cannot bypass envelope integrity. Keys and logs require owner-only permissions, regular
+file type, expected ownership, bounded size, and final-component symlink
+rejection.
+
+The audit key stays outside telemetry. Helix export is an offline transformation
+performed only after whole-file verification; AgentShield does not connect to a
+Helix endpoint. HMAC does not provide confidentiality or prevent rollback to a
+valid prefix, so deployments must separately protect the key and anchor trusted
+final MAC receipts.
 
 ## Fail-closed behavior
 
-Invalid policies, unsafe audit files, inability to apply a requested resource
+Invalid policies, missing or unsafe audit keys, invalid audit chains, retention
+limit exhaustion, unsafe audit files, inability to apply a requested resource
 limit, failure to isolate the process group and unsupported option combinations
 terminate the operation with a non-zero code. Monitoring does not claim that a
 failed snapshot is safe.
 
+Policy files cross an administrative trust boundary and therefore use secure
+open/type/owner/mode/size validation before parsing. The versioned parser
+rejects unknown or duplicate configuration. In enforce mode, deny decisions
+and unapproved approval decisions are emitted to telemetry before the monitor
+terminates the supervised process group. Launch-scoped approvals exist only in
+monitor memory and cannot override deny decisions.
+
+Enforced launches use a parent-child `ptrace` exec gate. The initial executable
+is stopped after the kernel completes `exec` but before it runs userspace code;
+AgentShield evaluates the resulting process image and environment, then either
+detaches and resumes it or kills it. If the gate cannot be established, launch
+fails closed. Continuous sampling remains responsible for later drift and does
+not provide the same pre-instruction guarantee for subsequent exec transitions.
+
 ## Deliberate limits
 
 Process-group termination uses a bounded `SIGTERM` grace period followed by
-`SIGKILL`. A hostile descendant can create a new session and escape a process
-group; complete tree containment requires the planned cgroup adapter.
+`SIGKILL`. With `--cgroup`, AgentShield first verifies a writable delegated
+cgroup v2 scope, moves itself to a monitor leaf, creates a separate agent leaf,
+applies memory/PID/CPU controls, and holds the child at the exec boundary until
+membership is confirmed. `cgroup.kill` terminates descendants even after they
+create a new session, and temporary leaves are removed on exit. Setup or cleanup
+failure is reported and setup fails closed.
+
+Delegation must come from a trusted service manager; the documented
+`systemd-run --user ... -p Delegate=yes` flow supplies it. A hostile process
+running as the same host UID may be able to manipulate user-delegated cgroup
+files and deliberately escape. Strong hostile-code isolation additionally
+requires a distinct UID/user namespace or a privileged supervisor that does not
+delegate the containing hierarchy to the agent.
+
+Network attribution correlates socket inode descriptors with `/proc/PID/net`
+tables from the target network namespace. It reports TCP/UDP protocol, local and
+remote endpoints, and kernel connection state. Strict privacy removes every
+endpoint and cgroup path. Sampling can miss short-lived sockets and currently
+does not decode Unix sockets.
 
 This version observes and constrains a launched process but is not a kernel
 mandatory-access-control system. Filesystem and network enforcement require the

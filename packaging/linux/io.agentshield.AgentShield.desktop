@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=AgentShield
+GenericName=AI Agent Runtime Security
+Comment=Monitor credentials, resources, policy decisions, and access drift
+Exec=agentshield-desktop
+Icon=io.agentshield.AgentShield
+Terminal=false
+Categories=System;Security;
+Keywords=AI;agent;security;privacy;monitoring;
+StartupNotify=true
+
