@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose a focused product or engineering improvement.
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Explain the user need without prescribing an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: What should become safer, clearer, or easier?
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security and privacy impact
+      description: Note new permissions, data collection, retention, network use, or enforcement behavior.
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Likely scope
+      options:
+        - Portfolio preview
+        - Enterprise roadmap
+        - Unsure
+    validations:
+      required: true

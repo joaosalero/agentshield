@@ -13,7 +13,7 @@ LDLIBS := -lcrypto
 BUILD := build
 PREFIX ?= /usr/local
 OBJECTS := $(BUILD)/sensor.o $(BUILD)/risk_engine.o $(BUILD)/audit_log.o $(BUILD)/main.o
-.PHONY: all check-version test soak cgroup-test-required sanitize java java-test jar sbom provenance dist verify-dist deterministic-package deb verify-deb install uninstall run-gui clean
+.PHONY: all check-version test portfolio-check soak cgroup-test-required sanitize java java-test jar sbom provenance dist verify-dist deterministic-package deb verify-deb install uninstall run-gui clean
 all: check-version $(BUILD)/agentshield
 check-version:
 	printf '%s\n' '$(VERSION)' | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$'
@@ -40,6 +40,8 @@ test: all $(BUILD)/test_risk $(BUILD)/test_behavior_eval
 	bash tests/test_make_version_rebuild.sh
 	bash tests/test_cli.sh ./$(BUILD)/agentshield
 	bash tests/test_cgroup.sh ./$(BUILD)/agentshield
+portfolio-check:
+	python3 scripts/validate_portfolio.py
 soak: all
 	AGENTSHIELD_SOAK_SECONDS=$${AGENTSHIELD_SOAK_SECONDS:-10} bash tests/test_soak.sh ./$(BUILD)/agentshield
 cgroup-test-required: all
@@ -83,7 +85,7 @@ install: all jar
 	install -m 0755 scripts/agentshield-desktop $(DESTDIR)$(PREFIX)/bin/agentshield-desktop
 	install -m 0644 $(BUILD)/agentshield-desktop.jar $(DESTDIR)$(PREFIX)/lib/agentshield/agentshield-desktop.jar
 	install -m 0644 policies/*.policy $(DESTDIR)$(PREFIX)/share/agentshield/policies/
-	install -m 0644 README.md SECURITY.md LICENSE $(DESTDIR)$(PREFIX)/share/doc/agentshield/
+	install -m 0644 README.md SECURITY.md SUPPORT.md CONTRIBUTING.md CHANGELOG.md LICENSE $(DESTDIR)$(PREFIX)/share/doc/agentshield/
 	install -m 0644 docs/*.md $(DESTDIR)$(PREFIX)/share/doc/agentshield/
 	install -m 0644 packaging/linux/io.agentshield.AgentShield.desktop $(DESTDIR)$(PREFIX)/share/applications/
 	install -m 0644 packaging/linux/io.agentshield.AgentShield.svg $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/

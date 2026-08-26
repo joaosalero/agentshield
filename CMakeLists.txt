@@ -64,10 +64,12 @@ install(FILES packaging/linux/io.agentshield.AgentShield.metainfo.xml
         DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
 install(FILES policies/baseline.policy policies/observe.policy
         DESTINATION ${CMAKE_INSTALL_DATADIR}/agentshield/policies)
-install(FILES README.md SECURITY.md CONTRIBUTING.md docs/AUDIT.md docs/POLICY.md
+install(FILES README.md SECURITY.md SUPPORT.md CONTRIBUTING.md CHANGELOG.md
+        docs/AUDIT.md docs/POLICY.md
         docs/PRIVACY.md docs/SECURITY_ARCHITECTURE.md docs/THREAT_MODEL.md
         docs/VALIDATION.md docs/DISTRIBUTION.md docs/PLATFORM_SUPPORT.md
         docs/AI_AND_DATA_SCIENCE.md docs/BEHAVIOR_ANALYTICS.md
+        docs/PORTFOLIO_CASE_STUDY.md docs/ROADMAP.md
         DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(FILES LICENSE VERSION DESTINATION ${CMAKE_INSTALL_DOCDIR})
 

@@ -1,76 +1,87 @@
 # AgentShield
 
-**Real-time credential, privilege, and resource visibility for AI agents.**
+[![CI](https://github.com/joaosalero/agentshield/actions/workflows/ci.yml/badge.svg)](https://github.com/joaosalero/agentshield/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f.svg)](LICENSE)
+![Platform: Linux and WSL](https://img.shields.io/badge/platform-Linux%20%7C%20WSL-5b8def)
 
-AgentShield answers a question that becomes more important as autonomous agents
-gain access to developer machines: **what can this agent access right now, and
-what deserves attention?**
+**A privacy-first runtime security console for AI agents.** AgentShield shows
+which credentials, privileges, files, and network connections an agent can use
+right now, highlights dangerous changes, and explains what deserves attention.
 
-It observes a running process without retaining or emitting credential values, evaluates its
-effective privileges and open resources, and produces explainable security
-findings in a live desktop dashboard or machine-readable event stream.
+![AgentShield architecture](docs/assets/architecture.svg)
 
-> Linux/WSL preview. AgentShield is an observability control, not a complete
-> sandbox. It does not claim to block every operating-system action.
+> Portfolio-ready Linux/WSL preview. AgentShield is an observability and
+> supervised-execution control—not a claim of complete operating-system
+> isolation.
 
-Build requirements are a C11 compiler, a C++17 compiler, Python 3, OpenSSL 3
-development headers, and JDK 17 for the optional desktop dashboard.
+## Why it matters
 
-## Capabilities
+AI agents can inherit access from their host process, while that effective
+access remains scattered across environment variables, Linux capabilities,
+open files, sockets, and policy decisions. AgentShield turns those signals into
+one live, explainable view without collecting credential values.
 
-- Live inventory of credential-like environment variable **names**
-- Credential values are discarded while parsing and are never retained or emitted
-- Effective UID and Linux capability detection
-- Sensitive open-file and network-socket visibility
-- TCP/UDP IPv4/IPv6 endpoint and connection-state attribution
-- Explainable rules with severity, evidence, score, and remediation
-- Access-drift detection for newly granted or revoked credentials, sensitive files,
-  sockets, privileges, and monitoring coverage
-- A bounded live access timeline that calls attention to dangerous new grants
-- Versioned allow/deny/approval policies with fail-closed supervised enforcement
-- Launch-scoped approvals that are never persisted
-- Point-in-time inspection, continuous monitoring, or supervised command launch
-- Authenticated HMAC-SHA-256 audit chain with offline verification
-- Verified `io.helix-sentinel.agentshield/v1` JSONL export without network transmission
-- Modern Java Swing security console with live exposure metrics, risk-aware tables,
-  policy decisions, access timeline, and privacy-first monitoring controls
-- Guided Demo Lab with progressive, clearly labelled synthetic security events
-- In-memory behavioral anomaly baseline with explainable advisory findings
-- Strict privacy mode for shared telemetry and demonstrations
-- Owner-only audit keys/logs, append pre-verification, and fail-closed size retention
-- Secure supervised execution with `no_new_privs`, no core dumps, descriptor
-  isolation, process groups, and optional CPU/memory/process limits
-- Optional delegated cgroup v2 tree limits and reliable descendant termination
-- Read-only `/proc` sensor written in C and policy engine written in C++17
-- Unit, integration, redaction, sanitizer, CMake, and CI validation
-- Deterministic Linux packaging, CycloneDX source inventory, in-toto build metadata, and CPack packages
+## Product experience
 
-## Architecture
+- **Live exposure inventory:** credential names, privileges, sensitive files,
+  sockets, and monitoring coverage.
+- **Access-drift timeline:** clearly distinguishes grants, revocations, and lost
+  visibility between snapshots.
+- **Explainable risk:** every finding includes severity, evidence, score, and a
+  remediation path.
+- **Policy supervision:** versioned allow, deny, and approval rules can block a
+  launch before the protected process starts.
+- **Tamper-evident evidence:** authenticated HMAC-SHA-256 audit chains support
+  offline verification and privacy-filtered export.
+- **Behavior analytics:** a bounded, in-memory baseline detects unusual access
+  patterns as advisory findings; it never silently changes security decisions.
 
-```text
-/proc metadata → C sensor → C++ risk engine → JSONL/TSV → Java dashboard
-                                             └────────→ Helix Sentinel (future)
-```
+## Try the Demo Lab
 
-The C sensor uses a fixed-size, stable ABI. The C++ layer owns policy and
-serialization. The desktop app runs across a process boundary, so the same
-event contract can be consumed by another UI or a security platform.
-
-## Quick start
+The guided demo is the fastest way to understand the product. It progressively
+simulates credential exposure, sensitive resource access, a policy decision,
+and containment—all with labelled synthetic data. It never reads real secrets,
+uses external connections, or mixes demo events with protected audit logs.
 
 ```bash
 make
+make java
+make run-gui
+```
+
+Select **Launch Demo Lab** in the desktop console. JDK 17 is required for the
+dashboard; the native monitor uses C11, C++17, Python 3, and OpenSSL 3 headers.
+
+## Technical depth
+
+| Concern | Implementation | Evidence |
+|---|---|---|
+| Low-level observation | Read-only Linux `/proc` sensor in C11 with a stable, fixed-size ABI | [Security architecture](docs/SECURITY_ARCHITECTURE.md) |
+| Risk and policy | C++17 rule engine, drift analysis, supervised launch, and JSONL/TSV contracts | [Policy guide](docs/POLICY.md) |
+| Desktop experience | Java 17 Swing console with live metrics, risk tables, timeline, and Demo Lab | [Portfolio case study](docs/PORTFOLIO_CASE_STUDY.md) |
+| Privacy | Credential values discarded during parsing; strict telemetry mode; no built-in network transmission | [Privacy guide](docs/PRIVACY.md) |
+| Integrity | Owner-only keys/logs, append pre-verification, HMAC chain, fail-closed retention | [Audit guide](docs/AUDIT.md) |
+| Supply chain | Pinned CI actions, CodeQL, deterministic archives, CycloneDX SBOM, and in-toto provenance | [Validation evidence](docs/VALIDATION.md) |
+
+The native layer is intentionally split: the C sensor gathers bounded process
+facts; the C++ engine owns interpretation, policy, and serialization. The Java
+desktop consumes the same process-boundary contract that a future Helix
+Sentinel integration can use.
+
+## Inspect or supervise an agent
+
+```bash
 ./build/agentshield inspect $$
-./build/agentshield --version
 ./build/agentshield watch 12345 --interval 1000
-./build/agentshield run -- python3 your_agent.py
 ./build/agentshield run --privacy strict --max-memory-mb 2048 \
   --max-cpu-seconds 600 -- python3 your_agent.py
-systemd-run --user --wait --collect --pipe -p Delegate=yes \
-  ./build/agentshield run --cgroup --max-memory-mb 2048 \
-  --max-processes 128 --max-cpu-percent 200 -- python3 your_agent.py
 ./build/agentshield run --policy policies/baseline.policy \
   --approve credential:MY_SCOPED_TOKEN -- python3 your_agent.py
+```
+
+For authenticated evidence:
+
+```bash
 ./build/agentshield audit init-key audit.key
 ./build/agentshield watch 12345 --privacy strict \
   --audit audit.jsonl --audit-key audit.key
@@ -78,18 +89,10 @@ systemd-run --user --wait --collect --pipe -p Delegate=yes \
 ./build/agentshield audit export audit.jsonl --audit-key audit.key > helix.jsonl
 ```
 
-Desktop dashboard (JDK 17+):
+The export contract is versioned as `io.helix-sentinel.agentshield/v1` and does
+not transmit data by itself.
 
-```bash
-make java
-make run-gui
-```
-
-Choose **Launch Demo Lab** to see a complete credential, resource, policy, and
-containment scenario. The lab uses no real secrets, personal files, or external
-connections and never mixes synthetic events with a protected audit log.
-
-Installable Debian package:
+## Install and remove
 
 ```bash
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
@@ -98,67 +101,39 @@ cpack --config build-release/CPackConfig.cmake -G DEB
 sudo apt install ./agentshield_*.deb
 ```
 
-The installer registers AgentShield in the application menu with its own icon.
-Uninstall with `sudo apt remove agentshield`; user-created audits and policies are
-preserved. See the [AI and data-science strategy](docs/AI_AND_DATA_SCIENCE.md) for
-the optional, privacy-preserving advisory layer.
+The Debian package adds an application-menu entry, product icon, desktop
+launcher, command-line executable, policies, documentation, and license.
+Uninstall with `sudo apt remove agentshield`; user-created audits and policies
+are preserved. See the [distribution guide](docs/DISTRIBUTION.md) for package
+verification and alternative formats.
 
-Alternative CMake build:
+## Security boundaries
 
-```bash
-cmake -S . -B build-cmake
-cmake --build build-cmake
-ctest --test-dir build-cmake --output-on-failure
-```
+AgentShield reports **observed exposure**, not every permission available
+through an external broker. The preview monitors same-user Linux processes.
+Kernel settings, namespaces, `/proc` restrictions, and short-lived resources
+can reduce visibility; loss of a monitoring surface is reported as uncertainty,
+not mistaken for lower risk. A compromised kernel is outside the trust boundary.
 
-Release-grade Linux containment validation requires a delegated user service
-manager and must run `make cgroup-test-required`; see the
-[validation evidence](docs/VALIDATION.md).
+Reports can contain local paths and must be handled as security telemetry. See
+the [threat model](docs/THREAT_MODEL.md), [platform matrix](docs/PLATFORM_SUPPORT.md),
+and [security policy](SECURITY.md) before operational use.
 
-## Event model
+## Project evidence
 
-Each JSON line follows the backward-compatible `io.agentshield.snapshot/v1` contract and contains:
+- [Portfolio case study](docs/PORTFOLIO_CASE_STUDY.md) — product decisions,
+  engineering trade-offs, and recruiter-oriented evidence.
+- [Validation evidence](docs/VALIDATION.md) — tests, scope, and environmental
+  limitations.
+- [Behavior analytics](docs/BEHAVIOR_ANALYTICS.md) — anomaly metrics and the
+  deliberate non-enforcement boundary.
+- [AI and data-science strategy](docs/AI_AND_DATA_SCIENCE.md) — privacy-preserving
+  path toward optional local intelligence.
+- [Roadmap](docs/ROADMAP.md) — portfolio baseline and enterprise evolution.
+- [Changelog](CHANGELOG.md) — notable project changes.
 
-- process identity and effective privilege metadata; command arguments are omitted;
-- credential names and classifications, never values;
-- security-relevant open resources;
-- normalized findings and a bounded 0–100 risk score.
-- a `changes` array describing grants and revocations since the preceding
-  successful snapshot; the first snapshot establishes the in-memory baseline.
-- an optional `policy` object containing normalized decisions, approval state,
-  and whether supervised execution was blocked.
+## Contributing and license
 
-Change events contain direction, category, severity, a privacy-filtered
-identifier, and an `attention` flag. A lost observability surface is treated as
-a high-severity grant of uncertainty instead of being mistaken for reduced
-exposure. Baselines exist only in monitor memory and are not persisted.
-
-Reports may expose local paths and should be handled as security telemetry.
-
-## Current threat model and limitations
-
-The dashboard presents **observed exposure**, not a complete inventory of every
-permission or credential available through external brokers. The preview monitors processes owned by the current user. Linux may restrict
-inspection through `ptrace_scope`, containers, user namespaces, or `/proc`
-mount options. TCP/UDP sockets are attributed through the process network
-namespace when kernel tables are readable; Unix sockets and restricted or
-short-lived connections may remain inode-only. Environment variables can change
-between snapshots, and a compromised kernel is outside the trust boundary.
-
-See [the policy guide](docs/POLICY.md), [authenticated audit guide](docs/AUDIT.md), [the security architecture](docs/SECURITY_ARCHITECTURE.md),
-[privacy guide](docs/PRIVACY.md), [threat model](docs/THREAT_MODEL.md), and
-[distribution guide](docs/DISTRIBUTION.md), [platform support matrix](docs/PLATFORM_SUPPORT.md),
-and [security policy](SECURITY.md).
-Behavioral analytics and its non-enforcement boundary are documented in the
-[local anomaly analytics guide](docs/BEHAVIOR_ANALYTICS.md).
-
-## Roadmap
-
-- eBPF event sensor for loss-resistant file, process, and network activity
-- Windows ETW and macOS Endpoint Security adapters
-- signed policy bundles and externally anchored audit receipts
-- native Helix Sentinel transport adapter with mutual authentication
-
-## License
-
-MIT. See [LICENSE](LICENSE).
+Contributions are welcome through [the contribution guide](CONTRIBUTING.md).
+Security vulnerabilities should follow [the private reporting process](SECURITY.md).
+AgentShield is available under the [MIT License](LICENSE).

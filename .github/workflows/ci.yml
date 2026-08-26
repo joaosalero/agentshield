@@ -36,6 +36,7 @@ jobs:
           distribution: temurin
           java-version: '17'
       - run: make java-test
+      - run: make portfolio-check
       - run: make deterministic-package
       - run: umask 077 && make verify-dist
       - run: make verify-deb
