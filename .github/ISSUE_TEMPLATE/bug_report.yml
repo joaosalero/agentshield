@@ -1,0 +1,60 @@
+name: Bug report
+description: Report reproducible incorrect behavior without including sensitive telemetry.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping improve AgentShield. Remove secrets, credential values,
+        usernames, local paths, IP addresses, and audit keys before submitting.
+  - type: input
+    id: version
+    attributes:
+      label: AgentShield version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      options:
+        - Native monitor or CLI
+        - Desktop console
+        - Policy enforcement
+        - Audit or export
+        - Installer or packaging
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the observed and expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Safe reproduction steps
+      description: Use synthetic values only. Never paste credentials or raw private audit logs.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Linux distribution, kernel, desktop environment, JDK, and installation method.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I removed secrets and personally identifying telemetry from this report.
+          required: true
+        - label: I will report security vulnerabilities privately according to SECURITY.md.
+          required: true
