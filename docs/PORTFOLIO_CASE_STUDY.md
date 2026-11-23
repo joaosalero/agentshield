@@ -65,6 +65,47 @@ policy decisions, and an access timeline. A guided Demo Lab progressively demons
 a safe baseline, credential exposure, network approval, deterministic denial, and
 containment using synthetic data and reserved destinations only.
 
+## Reproduce the evidence
+
+![Swing Demo Lab showing two synthetic policy decisions, approval for a network request and denial for a credential name](assets/demo-policy.png)
+
+**Desktop session.** The image captures the Swing content pane after its
+nine built-in events ran on JDK 21, compiled for Java 17. Select **Launch Demo
+Lab**, then **Policy decisions**. The exercise shows one credential name, two
+resources, one finding, and two decisions. The network request to
+`example.invalid` and the credential denial are fixture events. These
+decisions are rendered by the application without launching a monitored
+process, contacting the destination, or writing an authenticated audit.
+
+**Native Linux session.** From the repository root, run:
+
+```bash
+make
+python3 scripts/demo_supervision.py build/agentshield
+```
+
+The [driver](../scripts/demo_supervision.py) starts a local shell with an
+isolated environment containing a synthetic credential name. The shell waits
+briefly and exits with status 7. The driver checks exit propagation, observes
+a redacted credential name, verifies the audit chain with the native CLI, and
+compares its record count to the emitted snapshots. It prints only aggregate
+JSON. The number of records depends on scheduling. The temporary key, raw log,
+and telemetry stay local. Verification uses the key created in the same run;
+long-term evidence custody requires a separately protected final MAC.
+
+The [Ubuntu 24.04 demo run](https://github.com/joaosalero/agentshield/actions/runs/45231899498/job/137893360003)
+on November 23, 2026 emitted the following result:
+
+```json
+{"audit_verified": true, "child_exit": 7, "credential_name_redacted": true, "verified_records": 8}
+```
+
+The earlier [native CI job](https://github.com/joaosalero/agentshield/actions/runs/45217483845/job/137842444928)
+also exercised a separate two-record fixture, verified its authenticated
+export, and checked delegated cgroup limits and cleanup on its Ubuntu runner.
+The [test assertions](../tests/test_cli.sh) show which output fields were
+checked. A successful run is evidence for that environment and workload.
+
 ## Trade-offs and limitations
 
 The preview supports Linux/WSL and user-owned processes. `/proc` polling can miss

@@ -71,6 +71,10 @@ make run-gui
 Select **Launch Demo Lab** in the desktop console. JDK 17 is required for the
 dashboard; the native monitor uses C11, C++17, Python 3, and OpenSSL 3 headers.
 
+See the [captured policy decisions and native supervision demo](docs/PORTFOLIO_CASE_STUDY.md#reproduce-the-evidence)
+for an actual desktop session and a separate Linux example that verifies a
+strict-privacy audit before printing its result.
+
 ### Validate a local build
 
 ```bash
