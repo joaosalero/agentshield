@@ -12,7 +12,7 @@ changes and explains what deserves attention.
 ![AgentShield architecture](docs/assets/architecture.svg)
 
 > Portfolio-ready Linux/WSL preview. AgentShield is an observability and
-> supervised-execution control-not a claim of complete operating-system
+> supervised-execution control—not a claim of complete operating-system
 > isolation.
 
 ## Why it matters
@@ -59,7 +59,7 @@ Windows and macOS sensors are not implemented; see the
 
 The guided demo is the fastest way to understand the product. It progressively
 simulates credential exposure, sensitive resource access, a policy decision,
-and containment-all with labelled synthetic data. It never reads real secrets,
+and containment—all with labelled synthetic data. It never reads real secrets,
 uses external connections, or mixes demo events with protected audit logs.
 
 ```bash
@@ -161,16 +161,16 @@ and [security policy](SECURITY.md) before operational use.
 
 ## Project evidence
 
-- [Portfolio case study](docs/PORTFOLIO_CASE_STUDY.md) - product decisions,
+- [Portfolio case study](docs/PORTFOLIO_CASE_STUDY.md) — product decisions,
   engineering trade-offs, and recruiter-oriented evidence.
-- [Validation evidence](docs/VALIDATION.md) - tests, scope, and environmental
+- [Validation evidence](docs/VALIDATION.md) — tests, scope, and environmental
   limitations.
-- [Behavior analytics](docs/BEHAVIOR_ANALYTICS.md) - anomaly metrics and the
+- [Behavior analytics](docs/BEHAVIOR_ANALYTICS.md) — anomaly metrics and the
   deliberate non-enforcement boundary.
-- [AI and data-science strategy](docs/AI_AND_DATA_SCIENCE.md) - privacy-preserving
+- [AI and data-science strategy](docs/AI_AND_DATA_SCIENCE.md) — privacy-preserving
   path toward optional local intelligence.
-- [Roadmap](docs/ROADMAP.md) - portfolio baseline and enterprise evolution.
-- [Changelog](CHANGELOG.md) - notable project changes.
+- [Roadmap](docs/ROADMAP.md) — portfolio baseline and enterprise evolution.
+- [Changelog](CHANGELOG.md) — notable project changes.
 
 ## Contributing and license
 

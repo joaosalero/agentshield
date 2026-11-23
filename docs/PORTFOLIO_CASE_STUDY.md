@@ -1,4 +1,4 @@
-# AgentShield - engineering case study
+# AgentShield — engineering case study
 
 ## The problem
 
