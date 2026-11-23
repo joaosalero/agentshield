@@ -22,6 +22,8 @@ jobs:
       - run: ctest --test-dir build-cmake --output-on-failure
       - run: bash tests/test_cmake_version_reconfigure.sh build-cmake
       - run: make test
+      - name: Verify the synthetic supervision demo
+        run: python3 scripts/demo_supervision.py build/agentshield
       - run: AGENTSHIELD_SOAK_SECONDS=5 make soak
       - run: make sanitize
   desktop:
