@@ -93,6 +93,13 @@ JSON. The number of records depends on scheduling. The temporary key, raw log,
 and telemetry stay local. Verification uses the key created in the same run;
 long-term evidence custody requires a separately protected final MAC.
 
+The [Ubuntu 24.04 demo run](https://github.com/joaosalero/agentshield/actions/runs/45231899498/job/137893360003)
+on November 23, 2026 emitted the following result:
+
+```json
+{"audit_verified": true, "child_exit": 7, "credential_name_redacted": true, "verified_records": 8}
+```
+
 The earlier [native CI job](https://github.com/joaosalero/agentshield/actions/runs/45217483845/job/137842444928)
 also exercised a separate two-record fixture, verified its authenticated
 export, and checked delegated cgroup limits and cleanup on its Ubuntu runner.
