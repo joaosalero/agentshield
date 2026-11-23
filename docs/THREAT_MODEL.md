@@ -16,7 +16,7 @@ they can contain process metadata and local paths.
 
 | Threat | Current control | Residual limitation |
 |---|---|---|
-| Credential exposure | Collect names only; redaction invariant test | A malicious process already knows its own environment |
+| Credential exposure | Collect names only from `/proc/PID/environ`; redaction invariant test | The exec-time environment region is not a complete live inventory; later `setenv`/`putenv` changes may be absent, names do not prove usable credentials, and a malicious process already knows its own environment |
 | Excess privilege | Detect root UID and effective capabilities | Preview reports but does not revoke privileges |
 | Sensitive file access | Inspect security-relevant open descriptors | Very short-lived opens may occur between snapshots |
 | Data exfiltration | Attribute observed TCP/UDP sockets to local/remote endpoints and state | Payloads, Unix sockets and connections between samples are not observed |
@@ -36,6 +36,9 @@ they can contain process metadata and local paths.
 | Descendant escapes process group | Optional cgroup v2 membership before exec plus `cgroup.kill` | A hostile same-UID process may manipulate a user-delegated hierarchy; use UID/namespace separation for adversarial workloads |
 | Resource exhaustion | RLIMIT plus optional cgroup memory, PID and CPU controls | Host-level contention outside the delegated subtree remains external |
 | Approval replay | Approvals are launch-scoped and never persisted | Wildcard approvals intentionally broaden one supervised session |
+
+The environment observation limit follows the
+[Linux `/proc/PID/environ` interface](https://man7.org/linux/man-pages/man5/proc_pid_environ.5.html).
 
 ## Non-goals for v0.1
 

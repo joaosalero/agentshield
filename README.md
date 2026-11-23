@@ -5,13 +5,14 @@
 ![Platform: Linux and WSL](https://img.shields.io/badge/platform-Linux%20%7C%20WSL-5b8def)
 
 **A privacy-first runtime security console for AI agents.** AgentShield shows
-which credentials, privileges, files, and network connections an agent can use
-right now, highlights dangerous changes, and explains what deserves attention.
+credential-like environment names, effective privileges, and security-relevant
+open files and sockets observed for a running agent. It highlights dangerous
+changes and explains what deserves attention.
 
 ![AgentShield architecture](docs/assets/architecture.svg)
 
 > Portfolio-ready Linux/WSL preview. AgentShield is an observability and
-> supervised-execution control—not a claim of complete operating-system
+> supervised-execution control-not a claim of complete operating-system
 > isolation.
 
 ## Why it matters
@@ -38,9 +39,27 @@ one live, explainable view without collecting credential values.
 
 ## Try the Demo Lab
 
+### Build prerequisites
+
+Build inside Linux or WSL2 with a C11/C++17 toolchain, GNU Make, Python 3,
+OpenSSL 3 development headers, and JDK 17 or newer. On Ubuntu 24.04:
+
+```bash
+sudo apt update
+sudo apt install build-essential cmake libssl-dev python3 openjdk-17-jdk git
+git clone https://github.com/joaosalero/agentshield.git
+cd agentshield
+```
+
+The desktop also needs a graphical session, such as WSLg on WSL2. Native
+Windows and macOS sensors are not implemented; see the
+[platform matrix](docs/PLATFORM_SUPPORT.md).
+
+### Run the guided demo
+
 The guided demo is the fastest way to understand the product. It progressively
 simulates credential exposure, sensitive resource access, a policy decision,
-and containment—all with labelled synthetic data. It never reads real secrets,
+and containment-all with labelled synthetic data. It never reads real secrets,
 uses external connections, or mixes demo events with protected audit logs.
 
 ```bash
@@ -51,6 +70,22 @@ make run-gui
 
 Select **Launch Demo Lab** in the desktop console. JDK 17 is required for the
 dashboard; the native monitor uses C11, C++17, Python 3, and OpenSSL 3 headers.
+
+### Validate a local build
+
+```bash
+make test
+make java-test
+make portfolio-check
+```
+
+Run `make sanitize` for AddressSanitizer/UndefinedBehaviorSanitizer coverage.
+The ordinary native suite can skip the positive cgroup integration path when
+delegation is unavailable. Release qualification requires
+`make cgroup-test-required` on a host with delegated cgroup v2; see
+[validation evidence](docs/VALIDATION.md) for the conditions and historical
+receipts. Passing the desktop or documentation checks alone does not validate
+Linux process monitoring or containment.
 
 ## Technical depth
 
@@ -111,6 +146,11 @@ verification and alternative formats.
 
 AgentShield reports **observed exposure**, not every permission available
 through an external broker. The preview monitors same-user Linux processes.
+Credential names come from `/proc/PID/environ`, which describes the environment
+region established at exec; later `setenv`/`putenv` changes are not reliably
+visible there. A credential-like name does not prove that its value is valid
+or usable. See the [Linux interface documentation](https://man7.org/linux/man-pages/man5/proc_pid_environ.5.html).
+
 Kernel settings, namespaces, `/proc` restrictions, and short-lived resources
 can reduce visibility; loss of a monitoring surface is reported as uncertainty,
 not mistaken for lower risk. A compromised kernel is outside the trust boundary.
@@ -121,16 +161,16 @@ and [security policy](SECURITY.md) before operational use.
 
 ## Project evidence
 
-- [Portfolio case study](docs/PORTFOLIO_CASE_STUDY.md) — product decisions,
+- [Portfolio case study](docs/PORTFOLIO_CASE_STUDY.md) - product decisions,
   engineering trade-offs, and recruiter-oriented evidence.
-- [Validation evidence](docs/VALIDATION.md) — tests, scope, and environmental
+- [Validation evidence](docs/VALIDATION.md) - tests, scope, and environmental
   limitations.
-- [Behavior analytics](docs/BEHAVIOR_ANALYTICS.md) — anomaly metrics and the
+- [Behavior analytics](docs/BEHAVIOR_ANALYTICS.md) - anomaly metrics and the
   deliberate non-enforcement boundary.
-- [AI and data-science strategy](docs/AI_AND_DATA_SCIENCE.md) — privacy-preserving
+- [AI and data-science strategy](docs/AI_AND_DATA_SCIENCE.md) - privacy-preserving
   path toward optional local intelligence.
-- [Roadmap](docs/ROADMAP.md) — portfolio baseline and enterprise evolution.
-- [Changelog](CHANGELOG.md) — notable project changes.
+- [Roadmap](docs/ROADMAP.md) - portfolio baseline and enterprise evolution.
+- [Changelog](CHANGELOG.md) - notable project changes.
 
 ## Contributing and license
 

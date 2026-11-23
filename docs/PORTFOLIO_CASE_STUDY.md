@@ -1,12 +1,12 @@
-# AgentShield — engineering case study
+# AgentShield - engineering case study
 
 ## The problem
 
 AI agents can inherit developer credentials, open files, network connections, and
 Linux privileges that are invisible after launch. Traditional secret scanners find
-values in code; sandbox products constrain execution; neither directly answers what
-a specific running agent can access at this moment and what changed since its prior
-snapshot.
+values in code; sandbox products constrain execution. A separate observability
+layer can explain which exposure signals are visible for a running process and
+what changed since its prior snapshot, subject to the sensor's coverage limits.
 
 ## Product decision
 
@@ -40,16 +40,20 @@ cannot access credential values, and enforcement remains testable without the UI
 - Behavioral anomaly detection is in-memory and advisory. It contributes zero points
   to deterministic risk and cannot approve or block execution.
 
-## Measured evidence
+## Validation scope and evidence
+
+The repository distinguishes configured checks from recorded historical results.
+The latter are documented in [VALIDATION.md](VALIDATION.md) and have not been
+independently reproduced for every host or revision.
 
 | Evidence | Result |
 |---|---|
-| Native, desktop, and CodeQL checks | Required on protected `main` |
-| Sanitizer suite | AddressSanitizer and UndefinedBehaviorSanitizer pass |
-| Behavioral regression set | 0/140 synthetic normal false positives; 20/20 surges detected |
-| Packaging | Byte-for-byte deterministic Linux archive and Debian installer verification |
-| Kernel containment | Delegated cgroup v2 integration validated without skip |
-| Supply chain | CycloneDX input inventory, in-toto build metadata, bound SHA-256 checks |
+| Native, desktop, and CodeQL checks | Configured in [CI](../.github/workflows/ci.yml) for pushes and pull requests to `main`; required-check enforcement is a separate repository setting |
+| Sanitizer suite | Historical receipt in [VALIDATION.md](VALIDATION.md) records passing AddressSanitizer and UndefinedBehaviorSanitizer runs |
+| Behavioral regression set | 2026-08-25 receipt: 0/140 synthetic normal false positives; 20/20 surges detected |
+| Packaging | `make deterministic-package` and `make verify-deb` check byte-for-byte repackaging and package contents; they do not prove reproducible compilation |
+| Kernel containment | 2026-08-22 receipt: delegated cgroup v2 integration passed without a skip on the documented WSL2 host |
+| Supply chain | Build targets generate a CycloneDX source-input inventory and unsigned in-toto build metadata with bound SHA-256 checks; these are not a complete runtime SBOM or a signed attestation |
 
 These results are bounded engineering evidence, not claims of production prevalence,
 formal verification, or compliance certification.
