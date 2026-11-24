@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cctype>
 #include <csignal>
 #include <cstring>
 #include <fcntl.h>
@@ -51,14 +52,16 @@ void usage(){
       "  agentshield audit init-key FILE\n"
       "  agentshield audit verify FILE --audit-key FILE\n"
       "  agentshield audit export FILE --audit-key FILE\n"
+      "  agentshield doctor\n"
       "  agentshield --version\n\nOptions:\n"
-      "  --format json|tsv          Output format (default: json)\n"
+      "  --format json|tsv|prometheus Output format (Prometheus is inspect-only)\n"
       "  --privacy standard|strict Strict redacts credential names and paths\n"
       "  --interval MS              Watch interval (default: 1000)\n"
       "  --audit FILE               Append authenticated audit envelopes\n"
       "  --audit-key FILE           Owner-only 32-byte HMAC key file\n"
       "  --audit-max-bytes N        Fail closed at this audit size (default: 64 MiB)\n"
       "  --policy FILE              Evaluate a secure AgentShield policy file\n"
+      "  --policy-sha256 HEX        Require the exact lowercase policy digest\n"
       "  --approve CATEGORY:VALUE   Approve one policy-gated exposure for this run\n"
       "  --max-memory-mb N          Supervised process address-space limit\n"
       "  --max-cpu-seconds N        Supervised process CPU limit\n"
@@ -69,6 +72,25 @@ void usage(){
       "  --agent-input MODE         discard (default) or inherit\n"
       "  --allow-new-privs          Disable the default no_new_privs control\n\n"
       "Credential values and command arguments are never retained in snapshots or emitted.\n";
+}
+
+bool readable(const std::string& path){int fd=open(path.c_str(),O_RDONLY|O_CLOEXEC|O_NONBLOCK);if(fd<0)return false;close(fd);return true;}
+void doctor(){
+    std::string target="/proc/"+std::to_string(getppid());
+    bool status=readable(target+"/status"),environment=readable(target+"/environ"),resources=readable(target+"/fd");
+    bool cgroup_v2=readable("/sys/fs/cgroup/cgroup.controllers"),cgroup_delegated=cgroup_v2&&access("/sys/fs/cgroup",W_OK)==0;
+    bool core_ready=status&&environment&&resources;
+    std::cout<<"{\"schema\":\"io.agentshield.doctor/v1\",\"ready\":"<<(core_ready?"true":"false")
+      <<",\"checks\":{\"procStatus\":"<<(status?"true":"false")
+      <<",\"procEnvironment\":"<<(environment?"true":"false")
+      <<",\"procResources\":"<<(resources?"true":"false")
+      <<",\"cgroupV2\":"<<(cgroup_v2?"true":"false")
+      <<",\"cgroupDelegated\":"<<(cgroup_delegated?"true":"false")
+      <<",\"runningAsRoot\":"<<(geteuid()==0?"true":"false")
+      <<"},\"capabilities\":{\"coreMonitoring\":\""<<(core_ready?"READY":"UNAVAILABLE")
+      <<"\",\"treeContainment\":\""<<(cgroup_delegated?"READY":"OPTIONAL_UNAVAILABLE")
+      <<"\"},\"privacy\":{\"readsCredentialValues\":false,\"emitsCredentialValues\":false}}\n";
+    if(!core_ready)throw std::runtime_error("core process monitoring surfaces are unavailable");
 }
 
 int parse_positive(const std::string& value){
@@ -140,9 +162,10 @@ void validate_approval(const std::string& approval){
     auto separator=approval.find(':');if(separator==std::string::npos||separator==0||separator+1>=approval.size()||approval.find_first_of("\r\n\t")!=std::string::npos)throw std::invalid_argument("approval must be CATEGORY:VALUE");
     std::string category=approval.substr(0,separator);if(category!="credential"&&category!="filesystem"&&category!="network")throw std::invalid_argument("approval category must be credential, filesystem, or network");
 }
+void validate_sha256(const std::string& value){if(value.size()!=64||!std::all_of(value.begin(),value.end(),[](unsigned char c){return std::isdigit(c)||(c>='a'&&c<='f');}))throw std::invalid_argument("policy SHA-256 must be 64 lowercase hexadecimal characters");}
 int emit(int pid,const std::string& format,agentshield::Privacy privacy,agentshield::Assessment* previous=nullptr,const agentshield::Policy* policy=nullptr,const std::set<std::string>& approvals={},agentshield::BehaviorBaseline* behavior=nullptr){
     as_snapshot snapshot{};char error[256];if(as_collect_snapshot(pid,&snapshot,error,sizeof error)!=0){std::cerr<<"agentshield: "<<error<<'\n';return 1;}
-    auto assessment=agentshield::assess(snapshot);auto changes=previous&&previous->snapshot.pid?agentshield::detect_changes(*previous,assessment):std::vector<agentshield::ExposureChange>{};if(behavior){auto signal=behavior->observe(assessment);agentshield::add_behavior_advisory(assessment,signal);}std::optional<agentshield::PolicyEvaluation> evaluation;if(policy)evaluation=agentshield::evaluate_policy(assessment,*policy,approvals);long long timestamp=now_ms();auto evaluated=evaluation?&*evaluation:nullptr;std::string json=agentshield::to_json(assessment,timestamp,privacy,changes,evaluated);std::cout<<(format=="tsv"?agentshield::to_tsv(assessment,timestamp,privacy,changes,evaluated):json)<<std::flush;
+    auto assessment=agentshield::assess(snapshot);auto changes=previous&&previous->snapshot.pid?agentshield::detect_changes(*previous,assessment):std::vector<agentshield::ExposureChange>{};if(behavior){auto signal=behavior->observe(assessment);agentshield::add_behavior_advisory(assessment,signal);}std::optional<agentshield::PolicyEvaluation> evaluation;if(policy)evaluation=agentshield::evaluate_policy(assessment,*policy,approvals);long long timestamp=now_ms();auto evaluated=evaluation?&*evaluation:nullptr;std::string json=agentshield::to_json(assessment,timestamp,privacy,changes,evaluated);std::cout<<(format=="tsv"?agentshield::to_tsv(assessment,timestamp,privacy,changes,evaluated):format=="prometheus"?agentshield::to_prometheus(assessment,changes,evaluated):json)<<std::flush;
     if(audit_fd>=0){try{agentshield::AuditRecord record{audit_sequence+1,timestamp,audit_previous_mac,"",json,""};std::string encoded=agentshield::encode_audit_record(record,*audit_key);if(encoded.size()>audit_max_bytes-audit_size)throw std::runtime_error("audit retention limit reached; archive or replace the verified log explicitly");write_all(audit_fd,encoded);audit_size+=encoded.size();audit_sequence++;audit_previous_mac=agentshield::decode_audit_record(encoded.substr(0,encoded.size()-1)).mac;}catch(const std::exception& error){std::cerr<<"agentshield: "<<error.what()<<'\n';return 1;}}
     if(previous)*previous=std::move(assessment);
     return evaluation&&evaluation->blocked?3:0;
@@ -200,7 +223,8 @@ int main(int argc,char** argv){
         harden_monitor();
         if(argc<2||std::string(argv[1])=="--help"){usage();return argc<2?2:0;}
         if(std::string(argv[1])=="--version"){if(argc!=2)throw std::invalid_argument("--version accepts no arguments");std::cout<<"AgentShield "<<AGENTSHIELD_VERSION<<'\n';return 0;}
-        std::string action=argv[1],format="json",privacy_text="standard",audit_path,audit_key_path,policy_path;std::set<std::string> approvals;int interval=1000,pid=0,command_index=-1;std::uint64_t configured_audit_max=64U*1024U*1024U;bool audit_max_configured=false;RunLimits limits;
+        if(std::string(argv[1])=="doctor"){if(argc!=2)throw std::invalid_argument("doctor accepts no arguments");doctor();return 0;}
+        std::string action=argv[1],format="json",privacy_text="standard",audit_path,audit_key_path,policy_path,policy_sha256;std::set<std::string> approvals;int interval=1000,pid=0,command_index=-1;std::uint64_t configured_audit_max=64U*1024U*1024U;bool audit_max_configured=false;RunLimits limits;
         if(action=="audit"){
             if(argc<4)throw std::invalid_argument("audit requires init-key, verify, or export and a file");
             std::string operation=argv[2],path=argv[3];
@@ -214,18 +238,20 @@ int main(int argc,char** argv){
         }
         int i=2;if(action=="inspect"||action=="watch"){if(i>=argc)throw std::invalid_argument("PID is required");pid=parse_positive(argv[i++]);}
         for(;i<argc;++i){std::string argument=argv[i];if(argument=="--"){command_index=i+1;break;}if(argument=="--allow-new-privs"){limits.no_new_privileges=false;continue;}if(argument=="--cgroup"){limits.cgroup=true;continue;}
-            if((argument=="--interval"||argument=="--format"||argument=="--privacy"||argument=="--audit"||argument=="--audit-key"||argument=="--audit-max-bytes"||argument=="--policy"||argument=="--approve"||argument=="--max-memory-mb"||argument=="--max-cpu-seconds"||argument=="--max-processes"||argument=="--max-cpu-percent"||argument=="--agent-output"||argument=="--agent-input")&&i+1<argc){std::string value=argv[++i];if(argument=="--interval")interval=parse_positive(value);else if(argument=="--format")format=value;else if(argument=="--privacy")privacy_text=value;else if(argument=="--audit")audit_path=value;else if(argument=="--audit-key")audit_key_path=value;else if(argument=="--audit-max-bytes"){configured_audit_max=parse_positive_size(value);audit_max_configured=true;}else if(argument=="--policy")policy_path=value;else if(argument=="--approve"){validate_approval(value);approvals.insert(value);}else if(argument=="--max-memory-mb")limits.memory_mb=parse_positive(value);else if(argument=="--max-cpu-seconds")limits.cpu_seconds=parse_positive(value);else if(argument=="--max-processes")limits.processes=parse_positive(value);else if(argument=="--max-cpu-percent"){limits.cpu_percent=parse_positive(value);if(limits.cpu_percent>1000)throw std::invalid_argument("max CPU percent cannot exceed 1000");}else if(argument=="--agent-output"){if(value=="inherit")limits.inherit_output=true;else if(value!="discard")throw std::invalid_argument("agent output must be discard or inherit");}else{if(value=="inherit")limits.inherit_input=true;else if(value!="discard")throw std::invalid_argument("agent input must be discard or inherit");}continue;}throw std::invalid_argument("unknown or incomplete option: "+argument);}
-        if(format!="json"&&format!="tsv")throw std::invalid_argument("format must be json or tsv");
+            if((argument=="--interval"||argument=="--format"||argument=="--privacy"||argument=="--audit"||argument=="--audit-key"||argument=="--audit-max-bytes"||argument=="--policy"||argument=="--policy-sha256"||argument=="--approve"||argument=="--max-memory-mb"||argument=="--max-cpu-seconds"||argument=="--max-processes"||argument=="--max-cpu-percent"||argument=="--agent-output"||argument=="--agent-input")&&i+1<argc){std::string value=argv[++i];if(argument=="--interval")interval=parse_positive(value);else if(argument=="--format")format=value;else if(argument=="--privacy")privacy_text=value;else if(argument=="--audit")audit_path=value;else if(argument=="--audit-key")audit_key_path=value;else if(argument=="--audit-max-bytes"){configured_audit_max=parse_positive_size(value);audit_max_configured=true;}else if(argument=="--policy")policy_path=value;else if(argument=="--policy-sha256"){validate_sha256(value);policy_sha256=value;}else if(argument=="--approve"){validate_approval(value);approvals.insert(value);}else if(argument=="--max-memory-mb")limits.memory_mb=parse_positive(value);else if(argument=="--max-cpu-seconds")limits.cpu_seconds=parse_positive(value);else if(argument=="--max-processes")limits.processes=parse_positive(value);else if(argument=="--max-cpu-percent"){limits.cpu_percent=parse_positive(value);if(limits.cpu_percent>1000)throw std::invalid_argument("max CPU percent cannot exceed 1000");}else if(argument=="--agent-output"){if(value=="inherit")limits.inherit_output=true;else if(value!="discard")throw std::invalid_argument("agent output must be discard or inherit");}else{if(value=="inherit")limits.inherit_input=true;else if(value!="discard")throw std::invalid_argument("agent input must be discard or inherit");}continue;}throw std::invalid_argument("unknown or incomplete option: "+argument);}
+        if(format!="json"&&format!="tsv"&&format!="prometheus")throw std::invalid_argument("format must be json, tsv, or prometheus");
         if(privacy_text!="standard"&&privacy_text!="strict")throw std::invalid_argument("privacy must be standard or strict");
         if(action!="inspect"&&action!="watch"&&action!="run")throw std::invalid_argument("unknown action: "+action);
+        if(format=="prometheus"&&action!="inspect")throw std::invalid_argument("prometheus format is valid only with inspect");
         if(action!="run"&&(limits.memory_mb||limits.cpu_seconds||limits.processes||limits.cpu_percent||limits.cgroup||!limits.no_new_privileges||limits.inherit_output||limits.inherit_input))throw std::invalid_argument("process controls are valid only with run");
         if(limits.cpu_percent&&!limits.cgroup)throw std::invalid_argument("--max-cpu-percent requires --cgroup");
         if(!approvals.empty()&&policy_path.empty())throw std::invalid_argument("--approve requires --policy");
+        if(!policy_sha256.empty()&&policy_path.empty())throw std::invalid_argument("--policy-sha256 requires --policy");
         if(audit_path.empty()!=audit_key_path.empty())throw std::invalid_argument("--audit and --audit-key must be provided together");
         if(audit_path.empty()&&audit_max_configured)throw std::invalid_argument("--audit-max-bytes requires --audit");
         if(configured_audit_max>256U*1024U*1024U)throw std::invalid_argument("--audit-max-bytes cannot exceed 256 MiB per session file");
         if(action!="run"&&!approvals.empty())throw std::invalid_argument("approvals are valid only with run");
-        std::optional<agentshield::Policy> policy;if(!policy_path.empty()){std::istringstream input(read_policy_file(policy_path));policy=agentshield::parse_policy(input);if(policy->enforce&&action!="run")throw std::invalid_argument("enforce policies are valid only with run");}
+        std::optional<agentshield::Policy> policy;if(!policy_path.empty()){std::string policy_data=read_policy_file(policy_path);if(!policy_sha256.empty()){std::string actual=agentshield::sha256_hex(policy_data);if(CRYPTO_memcmp(actual.data(),policy_sha256.data(),actual.size())!=0)throw std::invalid_argument("policy SHA-256 mismatch");}std::istringstream input(policy_data);policy=agentshield::parse_policy(input);if(policy->enforce&&action!="run")throw std::invalid_argument("enforce policies are valid only with run");}
         agentshield::Privacy privacy=privacy_text=="strict"?agentshield::Privacy::strict:agentshield::Privacy::standard;if(!audit_path.empty()){audit_key=read_audit_key(audit_key_path);audit_fd=open_audit(audit_path,*audit_key,configured_audit_max);}
         if(action=="inspect"){int result=emit(pid,format,privacy,nullptr,policy?&*policy:nullptr,approvals);finalize_audit();return result;}
         std::signal(SIGINT,stop);std::signal(SIGTERM,stop);pid_t child=-1;agentshield::Assessment previous;agentshield::BehaviorBaseline behavior;

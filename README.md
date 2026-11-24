@@ -36,6 +36,9 @@ one live, explainable view without collecting credential values.
   offline verification and privacy-filtered export.
 - **Behavior analytics:** a bounded, in-memory baseline detects unusual access
   patterns as advisory findings; it never silently changes security decisions.
+- **Operational integration:** versioned readiness diagnostics, aggregate
+  Prometheus metrics, and content-addressed policy pinning support controlled
+  enterprise workflows without adding a network listener.
 
 ## Try the Demo Lab
 
@@ -111,6 +114,8 @@ Sentinel integration can use.
 
 ```bash
 ./build/agentshield inspect $$
+./build/agentshield doctor
+./build/agentshield inspect $$ --format prometheus
 ./build/agentshield watch 12345 --interval 1000
 ./build/agentshield run --privacy strict --max-memory-mb 2048 \
   --max-cpu-seconds 600 -- python3 your_agent.py
@@ -174,6 +179,8 @@ and [security policy](SECURITY.md) before operational use.
 - [AI and data-science strategy](docs/AI_AND_DATA_SCIENCE.md) — privacy-preserving
   path toward optional local intelligence.
 - [Roadmap](docs/ROADMAP.md) — portfolio baseline and enterprise evolution.
+- [Operations guide](docs/OPERATIONS.md) — readiness, privacy-safe metrics,
+  alert semantics, and incident evidence.
 - [Changelog](CHANGELOG.md) — notable project changes.
 
 ## Contributing and license

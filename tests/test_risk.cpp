@@ -146,9 +146,15 @@ int main() {
     assert(socket_json.find("\"attributed\":true")!=std::string::npos&&socket_json.find("203.0.113.8:443")!=std::string::npos);
     auto strict_socket_json=agentshield::to_json(agentshield::assess(socket_snapshot),4,agentshield::Privacy::strict);
     assert(strict_socket_json.find("203.0.113.8") == std::string::npos && strict_socket_json.find("192.0.2.4") == std::string::npos);
+    auto socket_metrics=agentshield::to_prometheus(agentshield::assess(socket_snapshot));
+    assert(socket_metrics.find("agentshield_exposures{category=\"network\"} 1")!=std::string::npos);
+    assert(socket_metrics.find("203.0.113.8")==std::string::npos&&socket_metrics.find("192.0.2.4")==std::string::npos);
+    assert(socket_metrics.find("agentshield_coverage{surface=\"resources\"} 1")!=std::string::npos);
     auto network_policy=policy;network_policy.default_network=agentshield::PolicyAction::approval;
     auto network_approved=agentshield::evaluate_policy(agentshield::assess(socket_snapshot),network_policy,{"network:*"});
     assert(!network_approved.blocked&&network_approved.decisions.size()==1&&network_approved.decisions[0].approved);
+    auto policy_metrics=agentshield::to_prometheus(agentshield::assess(socket_snapshot),{},&network_approved);
+    assert(policy_metrics.find("agentshield_policy_blocked 0")!=std::string::npos);
     std::istringstream network_prefix_text(
         "version 1\nmode enforce\nrequire-full-coverage true\nallow-root false\n"
         "allow-capabilities false\nmax-risk-score 100\ndefault credential allow\n"

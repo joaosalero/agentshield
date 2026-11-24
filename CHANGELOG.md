@@ -8,6 +8,13 @@ All notable changes to AgentShield are documented here. The project follows
 ### Added
 
 - Portfolio case study, product roadmap, repository templates, and documentation checks.
+- Versioned readiness diagnostics through `agentshield doctor`.
+- Privacy-safe Prometheus text exposition for point-in-time inspection.
+- Deterministic sanitizer-backed parser fuzzing and an enterprise operations guide.
+- Monthly security regression workflow, manual CI dispatch, and automated GitHub
+  Actions update proposals.
+- CodeQL Action v4 on the supported Node.js 24 runtime, pinned to an immutable commit.
+- Optional content-addressed policy pinning with fail-closed SHA-256 verification.
 
 ## [0.1.0] — 2026-08-26
 

@@ -54,3 +54,15 @@ prevalence or general model accuracy. Real-world thresholds require a larger,
 versioned corpus with representative agent workloads. The test additionally
 verifies that incomplete observability cannot train the baseline and that an
 advisory never changes deterministic risk or policy enforcement.
+
+## Operational contracts and parser robustness
+
+`tests/test_cli.sh` validates the versioned doctor response, required readiness
+fields, and explicit privacy declaration. It also verifies that Prometheus
+output contains aggregate coverage and exposure metrics while excluding
+synthetic credential names, values, and process identifiers.
+
+`make fuzz-smoke` applies 10,000 deterministic mutations to the policy and audit
+record parsers under AddressSanitizer and UndefinedBehaviorSanitizer. This is a
+bounded regression gate, not a substitute for a long-running coverage-guided
+fuzzing campaign.

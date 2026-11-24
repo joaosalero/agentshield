@@ -249,4 +249,34 @@ std::string to_tsv(const Assessment& a,long long timestamp_ms,Privacy privacy,co
     if(policy)for(const auto& d:policy->decisions)o<<"POLICY\t"<<action_name(d.action)<<'\t'<<tsv_field(d.category)<<'\t'<<tsv_field(private_policy_identifier(d,privacy))<<'\t'<<tsv_field(d.reason)<<'\t'<<(d.approved?"APPROVED":d.blocking?"BLOCKING":"ATTENTION")<<'\n';
     o<<"END\n";return o.str();
 }
+
+std::string to_prometheus(const Assessment& a,const std::vector<ExposureChange>& changes,const PolicyEvaluation* policy) {
+    std::array<std::size_t,5> findings{};
+    std::size_t files=0,sockets=0,grants=0,revocations=0,attention=0;
+    for(const auto& finding:a.findings)++findings[static_cast<unsigned>(finding.severity)];
+    for(std::size_t i=0;i<a.snapshot.resource_count;++i){if(a.snapshot.resources[i].kind==AS_RESOURCE_SOCKET)++sockets;else ++files;}
+    for(const auto& change:changes){if(change.direction==ChangeDirection::granted)++grants;else ++revocations;if(change.attention)++attention;}
+    std::ostringstream o;
+    o<<"# HELP agentshield_risk_score Deterministic AgentShield risk score.\n# TYPE agentshield_risk_score gauge\nagentshield_risk_score "<<a.risk_score<<'\n';
+    o<<"# HELP agentshield_exposures Current observed exposures by category.\n# TYPE agentshield_exposures gauge\n";
+    o<<"agentshield_exposures{category=\"credential\"} "<<a.snapshot.credential_count<<'\n';
+    o<<"agentshield_exposures{category=\"filesystem\"} "<<files<<'\n';
+    o<<"agentshield_exposures{category=\"network\"} "<<sockets<<'\n';
+    o<<"# HELP agentshield_findings Current findings by severity.\n# TYPE agentshield_findings gauge\n";
+    constexpr std::array<const char*,5> levels{{"info","low","medium","high","critical"}};
+    for(std::size_t i=0;i<levels.size();++i)o<<"agentshield_findings{severity=\""<<levels[i]<<"\"} "<<findings[i]<<'\n';
+    o<<"# HELP agentshield_coverage Monitoring coverage surface state.\n# TYPE agentshield_coverage gauge\n";
+    o<<"agentshield_coverage{surface=\"status\"} "<<((a.snapshot.coverage&AS_COVERAGE_STATUS)?1:0)<<'\n';
+    o<<"agentshield_coverage{surface=\"environment\"} "<<((a.snapshot.coverage&AS_COVERAGE_ENVIRONMENT)?1:0)<<'\n';
+    o<<"agentshield_coverage{surface=\"resources\"} "<<((a.snapshot.coverage&AS_COVERAGE_RESOURCES)?1:0)<<'\n';
+    o<<"# HELP agentshield_access_changes Changes since the preceding successful snapshot.\n# TYPE agentshield_access_changes gauge\n";
+    o<<"agentshield_access_changes{direction=\"granted\"} "<<grants<<'\n';
+    o<<"agentshield_access_changes{direction=\"revoked\"} "<<revocations<<'\n';
+    o<<"agentshield_access_changes{direction=\"attention\"} "<<attention<<'\n';
+    o<<"# HELP agentshield_policy_blocked Whether deterministic policy blocks the observed state.\n# TYPE agentshield_policy_blocked gauge\n";
+    o<<"agentshield_policy_blocked "<<(policy&&policy->blocked?1:0)<<'\n';
+    o<<"# HELP agentshield_collection_truncated Number of omitted collection items.\n# TYPE agentshield_collection_truncated gauge\n";
+    o<<"agentshield_collection_truncated "<<a.snapshot.truncated_items<<'\n';
+    return o.str();
+}
 }

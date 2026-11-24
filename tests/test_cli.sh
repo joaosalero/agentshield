@@ -4,6 +4,15 @@ binary=${1:?binary required}
 version=$(python3 scripts/read_version.py VERSION)
 test "$("$binary" --version)" = "AgentShield $version"
 echo "version contract: OK"
+doctor_output=$("$binary" doctor)
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["schema"]=="io.agentshield.doctor/v1" and d["ready"]; assert d["privacy"]=={"readsCredentialValues":False,"emitsCredentialValues":False}; assert set(d["checks"])=={"procStatus","procEnvironment","procResources","cgroupV2","cgroupDelegated","runningAsRoot"}; print("operational readiness diagnostics: OK")' <<<"$doctor_output"
+metrics_output=$(env SYNTHETIC_METRICS_PRIVATE_TOKEN=never-export-this "$binary" inspect $$ --format prometheus)
+grep -q '^# HELP agentshield_risk_score ' <<<"$metrics_output"
+grep -q '^agentshield_exposures{category="credential"} ' <<<"$metrics_output"
+grep -q '^agentshield_coverage{surface="environment"} 1$' <<<"$metrics_output"
+if grep -Eq 'SYNTHETIC_METRICS_PRIVATE_TOKEN|never-export-this|process|pid=' <<<"$metrics_output"; then echo "Prometheus metrics exposed an identifier" >&2; exit 1; fi
+if "$binary" watch $$ --format prometheus >/dev/null 2>&1; then echo "ambiguous streaming Prometheus output accepted" >&2; exit 1; fi
+echo "privacy-safe Prometheus contract: OK"
 output=$(env SYNTHETIC_DEMO_API_KEY_NAME=not-a-real-secret "$binary" inspect $$)
 python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["schema"]=="io.agentshield.snapshot/v1"; assert d["process"]["pid"]>0; assert "risk" in d; print("sensor integration: OK")' <<<"$output"
 if grep -q 'not-a-real-secret' <<<"$output"; then echo "credential value leaked" >&2; exit 1; fi
@@ -195,6 +204,12 @@ echo "desktop policy TSV contract: OK"
 chmod 666 "$policy_file"
 if "$binary" run --policy "$policy_file" -- true >/dev/null 2>&1; then echo "writable policy file accepted" >&2; exit 1; fi
 chmod 600 "$policy_file"
+policy_digest=$(sha256sum "$policy_file" | awk '{print $1}')
+env SYNTHETIC_POLICY_TOKEN=canary "$binary" run --interval 10 --policy "$policy_file" --policy-sha256 "$policy_digest" --approve credential:SYNTHETIC_POLICY_TOKEN -- sh -c 'sleep 0.05' >/dev/null
+wrong_digest=$(printf '%064d' 0)
+if "$binary" run --policy "$policy_file" --policy-sha256 "$wrong_digest" -- true >/dev/null 2>&1; then echo "policy digest mismatch accepted" >&2; exit 1; fi
+if "$binary" run --policy-sha256 "$policy_digest" -- true >/dev/null 2>&1; then echo "orphan policy digest accepted" >&2; exit 1; fi
+if "$binary" run --policy "$policy_file" --policy-sha256 ABCD -- true >/dev/null 2>&1; then echo "malformed policy digest accepted" >&2; exit 1; fi
 ln -s "$policy_file" "$policy_dir/policy-link"
 if "$binary" run --policy "$policy_dir/policy-link" -- true >/dev/null 2>&1; then echo "policy symlink accepted" >&2; exit 1; fi
 head -c 65537 /dev/zero >"$policy_dir/oversized.policy"
